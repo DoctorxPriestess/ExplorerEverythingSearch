@@ -1,0 +1,75 @@
+name: Release
+
+# Building a release is driven by a version tag (v1.0.0) or manually from the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (for example 1.0.0); defaults to the Directory.Build.props version'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package and publish the release
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'
+          if (-not $version) {
+            if ('${{ github.ref_type }}' -eq 'tag') { $version = '${{ github.ref_name }}'.TrimStart('v') }
+          }
+          if (-not $version) {
+            $match = Select-String -Path Directory.Build.props -Pattern '<Version>([^<]+)</Version>' | Select-Object -First 1
+            if ($match) { $version = $match.Matches[0].Groups[1].Value.Trim() }
+          }
+          if (-not $version) { throw 'could not determine the version to build' }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "version: $version"
+
+      - name: Package (build, unit tests, both packages)
+        shell: pwsh
+        run: ./tools/package.ps1 -Configuration Release -Version '${{ steps.version.outputs.value }}'
+
+      - name: Upload packages as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExplorerEverythingSearch-${{ steps.version.outputs.value }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+      - name: Create or update the GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Explorer Everything Search ${{ steps.version.outputs.value }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/*.zip
+          body: |
+            Explorer Everything Search ${{ steps.version.outputs.value }}
+
+            Download one of the archives below and unpack it anywhere:
+
+            - `ExplorerEverythingSearch-${{ steps.version.outputs.value }}-win-x64-portable.zip`
+              Self contained single EXE; no .NET installation required.
+            - `ExplorerEverythingSearch-${{ steps.version.outputs.value }}-win-x64-framework-dependent.zip`
+              Small package; requires the .NET 8 Desktop Runtime (x64).
+
+            See README.md for installation, configuration and troubleshooting.

@@ -1,0 +1,43 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and unit tests (windows)
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore ExplorerEverythingSearch.sln
+
+      - name: Build
+        run: dotnet build ExplorerEverythingSearch.sln -c Release --no-restore --nologo
+
+      - name: Unit tests
+        # The end to end project drives real Explorer and Everything windows, so it is not part of
+        # the build agents; only the unit and integration tests run here.
+        run: dotnet test tests/ExplorerEverythingSearch.Tests/ExplorerEverythingSearch.Tests.csproj -c Release --no-build --nologo --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: '**/test-results.trx'
+          if-no-files-found: ignore

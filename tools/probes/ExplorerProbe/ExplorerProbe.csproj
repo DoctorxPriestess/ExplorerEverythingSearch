@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ExplorerProbe</AssemblyName>
+    <RootNamespace>ExplorerProbe</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Developer/diagnostic tool: never shipped inside the release ZIP. -->
+  </PropertyGroup>
+
+</Project>

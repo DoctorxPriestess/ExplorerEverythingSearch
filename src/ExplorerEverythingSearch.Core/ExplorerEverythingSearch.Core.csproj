@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>ExplorerEverythingSearch.Core</RootNamespace>
+    <AssemblyName>ExplorerEverythingSearch.Core</AssemblyName>
+    <!-- WPF only for the managed UI Automation client (System.Windows.Automation): this assembly has no UI. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExplorerEverythingSearch.Tests" />
+    <InternalsVisibleTo Include="ExplorerEverythingSearch.E2E" />
+  </ItemGroup>
+
+</Project>
