@@ -1,0 +1,19 @@
+# Normalize line endings for a Windows-first repository while keeping binaries intact.
+* text=auto eol=crlf
+
+*.cs       text diff=csharp
+*.csproj   text
+*.xaml     text
+*.ps1      text
+*.md       text
+*.yml      text
+*.json     text
+*.sln      text eol=crlf
+*.manifest text
+
+# Binary assets must never be converted.
+*.png      binary
+*.ico      binary
+*.zip      binary
+*.exe      binary
+*.dll      binary

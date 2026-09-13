@@ -6,7 +6,10 @@
 
 Explorer's own search box is slow and its scope is easy to misread. This tool watches the Explorer search box of every open window and forwards the search to [Everything](https://www.voidtools.com/) instead, restricted to the folder *that window* is in (plus its subfolders). The results appear in an Everything window that is raised in front of Explorer **without stealing the keyboard focus**, so you can keep typing in the Explorer search box and refine the query.
 
-> Status: research prototype, verified by hand on one Windows 11 machine (see [docs/verification.md](docs/verification.md) for exactly what was measured and what was not). A unit test project now exists (`tests\ExplorerEverythingSearch.Tests`), but it has not been run yet and the end-to-end test project is still missing.
+> Status: verified by hand on one Windows 11 machine and covered by an automated test suite
+> (235 unit/integration tests: 234 passing, 1 manual-only entry; plus an end-to-end harness that
+> drives real Explorer and Everything windows). See [docs/verification.md](docs/verification.md)
+> for exactly what was measured and what was not.
 
 ## Core path
 
@@ -242,14 +245,14 @@ dotnet build ExplorerEverythingSearch.sln -c Release
 
 ## Tests
 
-- Unit tests: `tests\ExplorerEverythingSearch.Tests` (xUnit 2.9, `Microsoft.NET.Test.Sdk` 17.11, net8.0-windows, `InternalsVisibleTo` from Core). It currently covers `AppConfig.Normalize`/serialisation and `ConfigStore` (defaults, corruption, atomic save, unwritable root) via `AppConfigTests` and `ConfigStoreTests`, with fake `IExplorerLocationResolver`/`IStartupRegistry` helpers in `TestSupport`.
+- Unit and integration tests: `tests\ExplorerEverythingSearch.Tests` (xUnit 2.9, `Microsoft.NET.Test.Sdk` 17.11, net8.0-windows, `InternalsVisibleTo` from Core). Coverage: configuration and its clamping/serialisation, the config store (defaults, corruption, atomic save, unwritable root), the logger (format, levels, rotation, cleanup, on/off), the Everything query builder (scoping, quoting, capability fallbacks), the Shell location classifier and scope resolver (live folder, This PC, Home, unknown search views, unsupported namespaces), the idle debouncer, the search coordinator (supersede, deduplication, multi-window isolation) and the Enter/idle session logic.
 
 ```powershell
 dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.csproj -c Release
 ```
 
-  **This suite has not been executed — UNVERIFIED** (the repository's own build was still in progress while this document was written).
-- End-to-end tests: `tests\ExplorerEverythingSearch.E2E` is referenced by `InternalsVisibleTo` and CI comments but **does not exist yet — UNVERIFIED**; `build.yml` deliberately excludes E2E because it drives real Explorer and Everything windows.
+  Last run in this repository: **237 tests, 236 passed, 1 skipped** (the skipped one writes to `HKCU\...\Run` and is meant to be run by hand), about 4 seconds. The log cleanup tests cover a real defect that was found and fixed: the logger's "the file is closed now" hand-over used a `Set()`/`Reset()` pulse that the caller could miss, which made "clear logs" fail and froze the UI thread for five seconds.
+- End-to-end tests: `tests\ExplorerEverythingSearch.E2E` drives real Explorer and Everything windows through UI Automation and checks the log, the Everything window title and the result count. It needs an interactive desktop session, so `build.yml` deliberately leaves it out; run it by hand (see [docs/verification.md](docs/verification.md)). Last run in this repository: **13 of 13 scenarios passed in 72.9 s** (`dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all`), including one run on a Shell session left degraded by repeated `explorer.exe` kills — that run is the regression test for the `ShellWindows` zombie-entry defect documented in `docs/verification.md` §12.5.
 - The manual verification protocol that was actually executed (with timings and log excerpts) is in [docs/verification.md](docs/verification.md). The developer probe used for the low-level measurements is `tools\probes\ExplorerProbe` (`resolve` dumps Shell locations, `events` drives a real search box and logs every UI Automation signal).
 
 ## Troubleshooting

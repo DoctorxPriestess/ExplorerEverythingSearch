@@ -16,7 +16,7 @@ Conventions used below:
 C:\Users\ControlxSaria\AppData\Local\Temp\ees-smoke-root\logs\app.log   (8 363 bytes, 82 lines, last entry 02:44:56)
 ```
 
-At **02:49:45** that file no longer existed: the `ees-smoke-root\logs\` directory remained but was **empty**, and `ees-smoke-root\config.json` had been rewritten (mtime 02:18:37 → 02:48:32). The deletion was not performed by this document's author and no build was run. Two readings are therefore possible and neither could be confirmed from here: a parallel verification of the "clear logs" feature (which deletes `*.log` while the tool runs) or an external cleanup of the temp folder. The excerpts are reproduced verbatim from the 02:45 reading; **re-running the scenarios below is the only way to re-verify them.** Consequently the log excerpts in this document are **STALE** as artifacts, even though they were accurate when read.
+At **02:49:45** that file no longer existed: the `ees-smoke-root\logs\` directory remained but was **empty**, and `ees-smoke-root\config.json` had been rewritten (mtime 02:18:37 → 02:48:32). The cause was established afterwards: the agent working on this repository deleted the log files on purpose while verifying the "logging can be switched off / logs can be cleared" requirement against a running instance, which also rewrote `config.json`. The excerpts are reproduced verbatim from the 02:45 reading, so they are still **STALE as artifacts** even though the disappearance is now explained; re-running the scenarios below is the only way to re-verify them.
 
 ## 1. Test environment (re-measured while writing this document)
 
@@ -192,18 +192,18 @@ Everything in this list is **code-only**: it is implemented and reasoned about, 
 |---|---|---|
 | 1 | **Everything end-to-end latency range 114–208 ms** | only one 154 ms sample exists in the captured log. Fix: time N≥10 searches and record `Search completed in <n> ms`. |
 | 2 | **Enter path ≈100–200 ms from keypress to the Everything window** | the captured probes measured the Explorer result view (10–20 ms), not the Everything window. Fix: timestamp the keypress (probe) and the Everything title update (bridge log) in the same run. |
-| 3 | **The `...\smokedata` vs `...\smokedata\sub` two-window pair** | this session's log used other folders. Fix: re-run the two-window scenario and check both `ResolvedPath` lines. |
+| 3 | ~~The `...\smokedata` vs `...\smokedata\sub` two-window pair~~ | **CLOSED**: measured twice, first by hand (`hwnd=10422348` → `...\smokedata`, `hwnd=1576348` → `...\smokedata\sub`, see §4) and then by the `multi-window` E2E scenario (`hwnd=1181104` → `multi-window-a`, `hwnd=2622926` → `multi-window-b`, 131/132 ms). |
 | 4 | **Log rotation** (`maxLogFileSizeMb` / `maxLogFiles`, `app.1.log` … `app.N.log`) | no rotated file has ever been produced in the captured runs. Fix: set `maxLogFileSizeMb: 1`, `logLevel: Debug`, exercise searches until rotation, inspect `logs\`. |
-| 5 | **Clearing logs while running** (tray "Clear logs" / settings button) | `AppLogger.ClearLogs` (close → delete → reopen) was never run by this document's author. **Indirect evidence only:** between the 02:45 reading and 02:49:45 the `logs\` directory of the `--root` tree became empty and `config.json` was rewritten, which is consistent with a clear-logs run by a parallel process — attribution to that feature is an **INFERENCE**, not a measurement. Fix: click it with logging on, confirm `app.log` disappears (handle closed, so the deletion succeeds) and reappears with new lines. |
+| 5 | ~~Clearing logs while running~~ | **CLOSED**: `log-clear` (E2E) reports `ClearLogs succeeded in 5/5 rounds` with logging continuing after every round, and the unit tests assert the same at the logger level. A real defect was found and fixed on the way: the "file is closed now" hand-over used a `Set()`/`Reset()` pulse the caller could miss, which made clearing fail and blocked the calling thread for 5 s (see §12.4). |
 | 6 | **"Open log folder"** from tray and settings | code calls `Process.Start` on the folder; not exercised. |
 | 7 | **Tray menu end to end** (all items, status texts, balloons, double-click) | only the icon creation (`notification area icon created`) appears in the log. |
-| 8 | **Start with Windows**: writing the HKCU `Run` value, detecting a stale entry, automatic repair, and the settings "Repair start-up entry" button | the captured run had `startWithWindows: false`, so the code path never ran. Fix: enable it, check `HKCU\...\Run\ExplorerEverythingSearch`, then move the EXE and verify the repair log line. |
-| 9 | **`--startup`, `--settings`, `--exit`, `--help`, `--version`** | the captured runs used `--root` only. Fix: run each switch and observe the documented effect. |
+| 8 | ~~**Start with Windows**: writing the HKCU `Run` value, detecting a stale entry, automatic repair, and the settings "Repair start-up entry" button~~ | **CLOSED for the four registration branches**: the packaged EXE was run with `--root` against the real `HKCU\...\Run\ExplorerEverythingSearch` and create / repair (stale value pointing at `C:\gone\...`) / keep / remove were all observed in the registry and in `app.log` — see §12.7. The settings button itself (a second entry point to the same code) was not clicked. |
+| 9 | **`--startup`, `--settings`, `--exit`, `--help`, `--version`** | `--startup` **is** now verified (§12.7) and `--exit` is used by the E2E harness on every run. `--settings`, `--help` and `--version` remain unverified: the last two open a message box, which the console harness cannot drive or assert. |
 | 10 | **Second launch with `--settings` reaching the running instance** (mutex + named event) | not exercised. Fix: start the app, then `ExplorerEverythingSearch.exe --settings` and check that the first instance opens the dialog. |
 | 11 | **Two independent instances via two different `--root` values** | reasoned from `SingleInstanceGuard`'s hashed suffix; not run. |
-| 12 | **Idle CPU / no-wakeup claim** | reasoned from `MsgWaitForMultipleObjectsEx` + `Timeout.Infinite` timers; no measurement (e.g. Process Explorer CPU time over an idle hour). |
-| 13 | **The 60 s self-healing rescan actually repairing a missed window event** | no `Explorer rescan (periodic)` line appears in the captured log (the run was shorter than 60 s of relevant activity or the rescan happened without a Repaint). Fix: raise `logLevel` to `Debug`, close an Explorer window without destroying it (e.g. via a missed hook), and wait for the periodic rescan line. |
-| 14 | **Home (主文件夹) scope = union of known folders** | no `SearchScope=KnownFoldersUnion` line in the captured log. Fix: search from the Home view and check the log + the resulting `ancestor:` query. |
+| 12 | ~~Idle CPU / no-wakeup claim~~ | **CLOSED (measured)**: with two Explorer windows open and the tool idle for 12 s it used **15.6 ms** of CPU on a 24-core machine (**0.005 %** of one core, `TotalProcessorTime` delta), 26 threads. |
+| 13 | ~~The 60 s self-healing rescan~~ | **PARTLY CLOSED**: `Explorer rescan (periodic): windows=1 searchBoxes=1` was observed in the Explorer-restart run, and the `explorer-restart` E2E scenario reproduces the recovery. A rescan repairing a *missed* window event was still not produced deliberately. |
+| 14 | ~~Home (主文件夹) scope = union of known folders~~ | **CLOSED**: `SearchScope=KnownFoldersUnion` with six folders (`D:\ASUS\Desktop … D:\ASUS\Music`, i.e. the relocated known folders) and the `ancestor:` union query; also covered by the `home` E2E scenario. |
 | 15 | **A known folder redirected to a non-system drive / UNC path** | implemented via `SHGetKnownFolderPath`; not tested with an actual redirection. |
 | 16 | **Everything not installed / not running / database not loaded** notification paths | the test machine always had Everything running with a loaded database. Fix: stop Everything (and/or set a bogus `everythingPath`) and search. |
 | 17 | **Security software blocking `SetWindowsHookEx`** → fallback to focus/commit heuristics | the hook installed successfully here. Fix: set `detectEnterByKeyboardHook: false` and confirm Enter still works through the fallbacks (that is also the workaround documented in troubleshooting). |
@@ -211,12 +211,234 @@ Everything in this list is **code-only**: it is implemented and reasoned about, 
 | 19 | **A search result view whose origin folder is remembered successfully after leaving and re-entering** | only the carried-over-scope case (§4) was observed. |
 | 20 | **High DPI / multi-monitor / per-monitor DPI changes** | manifest declares `PerMonitorV2`; behaviour was not observed on a multi-monitor or mixed-DPI setup. |
 | 21 | **Running without administrator rights on a locked-down machine** | manifest is `asInvoker` and the test run was unelevated, but no ACL-restricted scenario (e.g. a read-only install directory, which triggers the "configuration is read-only" notification) was produced. |
-| 22 | **The unit tests and E2E tests** | `tests\ExplorerEverythingSearch.Tests` **now exists** (xUnit, `AppConfigTests` + `ConfigStoreTests` + `TestSupport` fakes) but **has never been executed** — no test run result exists, so nothing is proven yet. `tests\ExplorerEverythingSearch.E2E` still **does not exist**. Fix: run `dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.csproj -c Release` and record the result. |
-| 23 | **`tools\package.ps1`** | the file **now exists** (PowerShell 7+, builds the portable and framework-dependent zips into `artifacts\`, runs the unit tests unless `-SkipTests`, copies README/LICENSE into both packages). It has **never been executed**. Fix: run `pwsh tools/package.ps1 -SkipTests` and inspect `artifacts\*.zip`. |
-| 23b | **The GitHub workflows** `.github\workflows\build.yml` and `release.yml` | **never executed**; the referenced unit test project only just appeared, so the first CI run will be the real test. |
+| 22 | ~~The unit tests and E2E tests~~ | **CLOSED**: `dotnet test tests\ExplorerEverythingSearch.Tests\… -c Release` → **237 tests, 236 passed, 1 skipped**, ~4 s (the skipped one writes to `HKCU\…\Run` and is meant to be run by hand); `tests\ExplorerEverythingSearch.E2E --scenario all` → **13/13 passed, 72.9 s**, run twice in a healthy session and once in the degraded session of §12.5. |
+| 23 | **`tools\package.ps1`** | the file **now exists** (PowerShell 7+, builds the portable and framework-dependent zips into `artifacts\`, runs the unit tests unless `-SkipTests`, copies README/LICENSE into both packages). It has **never been executed** — **CLOSED later the same day**: executed twice (one run including the unit tests) and it produces `ExplorerEverythingSearch-1.0.0-win-x64-portable.zip` (57.7 MB: one self-contained EXE + README/LICENSE) and `…-win-x64-framework-dependent.zip` (0.2 MB). The portable package was unpacked into a temp directory and started from there to verify the shipped binary (§12.5). Fix: run `pwsh tools/package.ps1 -SkipTests` and inspect `artifacts\*.zip`. |
+| 23b | **The GitHub workflows** `.github\workflows\build.yml` and `release.yml` | still **never executed** (the development machine has no network route to github.com, so nothing was pushed). Their YAML was reviewed and the steps were run by hand; one real defect came out of that review: `ExplorerEverythingSearch.sln` contained only the two test projects, so CI would have been green without ever compiling the product — `dotnet sln add` for `Core` and `App` fixed it, and `dotnet build ExplorerEverythingSearch.sln` now builds all four projects. |
 | 24 | **The `E_NOINTERFACE` result for `IShellBrowser`/`IFolderView`** | asserted in the `ExplorerLocationResolver` class comment from earlier probing; not re-measured while writing this document. |
 | 25 | **`EVERYTHING_IPC_COPYDATA_COMMAND_LINE_UTF8` being accepted but ineffective** | asserted in the `EverythingIpc` class comment from earlier probing; not re-measured while writing this document. |
 | 26 | **`EverythingIpc.IsDatabaseLoaded` / `IsDriveIndexed` being used on any application path** | they respond to IPC (verified), but the application never queries them — they exist for diagnostics only. |
 | 27 | **Behaviour when the Explorer search box is exposed as a plain UIA `Edit`** (older Windows builds / a different shell layout) | only the Windows 11 build 26200 shape (`AutoSuggestBox` host) was tested. On Windows 10 the `FileExplorerSearchBox` AutomationId fallback may or may not match — **UNKNOWN**. |
 | 28 | **The `--root` instance isolation during a concurrent "real" run** | the captured run did use `--root`, but no real instance was running at the same time. |
-| 29 | **Persistence of the captioned `app.log` evidence** | the file was read at 02:45 (8 363 bytes / 82 lines) and was gone by 02:49:45, with `[root]\logs\` left empty. The deletion's cause is **UNKNOWN** (see the note at the top of this document); every log excerpt here is therefore a **STALE** artifact and needs a re-run to be re-verified. |
+| 29 | ~~Persistence of the captioned `app.log` evidence~~ | **EXPLAINED**: the deletion was a deliberate step of the "logging can be disabled / logs can be cleared" verification against a running instance (see the note at the top). The excerpts are still **STALE** artifacts, but for a known reason; §12 reproduces the current behaviour with fresh logs. |
+
+## 12. How to run the E2E harness
+
+`tests\ExplorerEverythingSearch.E2E` (added 2026-09-13) is a console application, not a `dotnet test`
+project, because every scenario drives a **real** Explorer search box and inspects the **real** Everything
+window. It is deliberately **not** part of `.github\workflows\build.yml`: a CI agent has no interactive
+desktop session and no Everything installation.
+
+```powershell
+# everything, with a build of the application first
+dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all
+
+# one scenario, keeping the working root for inspection
+dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario basic-idle --keep-artifacts
+
+# list the scenarios
+dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --list
+```
+
+| Option | Meaning |
+|---|---|
+| `--scenario <name>\|all` | scenario to run; defaults to `all` |
+| `--root <directory>` | working root instead of a fresh `%TEMP%\ees-e2e-<8 hex>` |
+| `--keep-artifacts` | keep the working root (`config.json`, `logs\`, test folders) |
+| `--no-build` | use the application as it is (the harness builds it by default) |
+
+What a run does: build `ExplorerEverythingSearch.App` (Debug) → create the working root → write
+`config.json` (`enabled=true`, `autoSearchDelay=1000`, `startWithWindows=false`, `showNotifications=false`,
+`logLevel=Debug`, `loggingEnabled=true`, `reuseEverythingWindow=true`) → start
+`ExplorerEverythingSearch.exe --root <root>` → run the scenarios → stop the instance it started (via
+`--exit`, then a kill if needed), close **only** the Explorer windows it opened (HWND diffing, `WM_CLOSE`)
+and delete the root. Exit code `0` = all passed, `1` = at least one failed, `2` = bad arguments.
+
+A scenario fails loudly with the reason, the last application log lines and, when the application process
+died, the tail of its standard error (`<root>\app\stderr.log`) — that is how the crash in §12.3 was found.
+
+Preconditions: an interactive desktop session and Everything installed/running. Window titles are matched
+with hints for both Chinese and English shells (`此电脑`/`This PC`, `主文件夹`/`Home`, `回收站`/`Recycle Bin`),
+and new windows are located by HWND diffing, so no title text is required in the normal flow.
+
+### 12.1 Measured result (2026-09-13, Windows 11 build 26200, Everything 1.5.0.1423b, .NET SDK 8.0.425)
+
+`--scenario all` → **13 passed / 0 failed, 77.7 s, exit code 0** (after the fix in §12.3; the suite was run
+in full three times and the `multi-window` scenario — the one that used to crash — four times).
+
+| Scenario | Result | Time | Evidence from the run |
+|---|---|---|---|
+| `basic-idle` | PASS | 3.9 s | `trigger=IdleTimeout text="e2ealphatoken" hwnd=722350 path="...\data\basic-idle" scope=CurrentDirectoryAndSubdirectories query="e2ealphatoken" window=reused latency=149ms`; Everything window title `...\data\basic-idle\ e2ealphatoken - Everything` |
+| `enter-immediate` | PASS | 2.5 s | `Enter -> submit visible after 240 ms; trigger=Enter text="e2eenterprobe" ... query="e2eenterprobe"` (well inside the 1000 ms idle window → it really was handled as Enter) |
+| `continuous` | PASS | 4.2 s | first `trigger=IdleTimeout text="e2econtone"`, then — without re-clicking the box — `trigger=Enter text="e2econtonextra"` from the same `hwnd`, i.e. the focus was still usable |
+| `this-pc` | PASS | 3.4 s | `scope=AllVolumes query="e2evolumescan"` with no `-path` and no `ancestor:` |
+| `home` | PASS | 3.7 s | `scope=KnownFoldersUnion`, `path="D:\ASUS\Desktop \| D:\ASUS\Documents \| D:\ASUS\Downloads \| D:\ASUS\Pictures \| D:\ASUS\Videos \| D:\ASUS\Music"`, query `<ancestor:D:\ASUS\Desktop\|…\|ancestor:D:\ASUS\Music>` |
+| `multi-window` | PASS | 7.3 s | window A `hwnd=1181104 path="...\multi-window-a"`, window B `hwnd=2622926 path="...\multi-window-b"`, latencies 131/132 ms — no cross contamination |
+| `explorer-restart` | PASS | 12.8 s | `[INFO] Explorer restarted: monitoring re-established` after `taskkill /F /IM explorer.exe`, then a successful search in the new window |
+| `everything-closed` | PASS | 4.1 s | after closing every Everything search window: `window=created` |
+| `window-reuse` | PASS | 5.4 s | first search `window=reused`, second (fresh query) `window=reused`, `query="e2ereusetwo"` |
+| `unsupported-namespace` | PASS | 4.9 s | `[WARN] search not redirected: UnsupportedShellNamespace detail="回收站" raw="::{645FF040-5081-101B-9F08-00AA002F954E}"`, no `Query=` line and no Everything title for that text |
+| `unicode-path` | PASS | 3.4 s | `path="...\data\数据 目录" text="文件alpha" query="文件alpha"` (Unicode keystrokes and UTF-8 log round trip) |
+| `logging-disabled` | PASS | 15.6 s | with `loggingEnabled=false`: no `logs\app.log` at all, and the Everything title still shows `e2enologscan` |
+| `log-clear` | PASS | 6.7 s | `ClearLogs succeeded in 5/5 rounds`, logging continued after every round |
+
+### 12.2 Raw evidence examples
+
+```
+Enter -> submit visible after 240 ms; trigger=Enter text="e2eenterprobe" hwnd=2166756
+        path="...\data\enter-immediate" scope=CurrentDirectoryAndSubdirectories query="e2eenterprobe" window=reused latency=137ms
+
+first:  trigger=IdleTimeout text="e2econtone"     hwnd=853270 path="...\data\continuous" ...
+second: trigger=Enter       text="e2econtonextra" hwnd=853270 path="...\data\continuous" ...
+```
+
+### 12.3 Defect found by the harness (fixed)
+
+While running the suite, the **application process was terminated by the .NET runtime**:
+
+```
+Process terminated. A callback was made on a garbage collected delegate of type
+'ExplorerEverythingSearch.Core!…NativeMethods+WinEventDelegate::Invoke'.
+Repeat 2 times:
+   at …NativeMethods.PeekMessage(MSG ByRef, IntPtr, UInt32, UInt32, UInt32)
+   at …StaDispatcher.PumpMessages()
+   at …StaDispatcher.Run()
+```
+
+`ExplorerWindowMonitor.InstallHooks()` created the `WinEventDelegate` as a **local variable** and only kept
+the returned hook handles, so the GC could collect the delegate and the next Explorer event called into
+freed memory — a random process kill in normal use, which is exactly what `multi-window` hit (timeout, no
+submit). It is now grounded in a field (`_winEventHandler`); `multi-window` passes 4/4 runs since.
+
+### 12.4 Limits of the E2E suite (not proven by it)
+
+- `log-clear` passes 5/5 rounds here in every run (15 rounds in total), while the unit test suite reported
+  `ClearLogs` failing **3/3** in its own harness (a lost-pulse race in `AppLogger.RequestMaintenance`). The
+  E2E path does not reproduce that race, so it did **not** clear the concern — the unit test evidence stood, and
+  it was right: `RequestMaintenance` handed control over with `Set()` followed immediately by `Reset()`, so the
+  caller could miss the pulse and then wait for the full 5 s timeout. Clearing the log therefore failed (and the
+  calling UI thread stalled) whenever the logger thread won the race. It is now a fresh one-shot
+  `ManualResetEventSlim` per request; the two unit tests that used to be skipped are enabled and pass, and
+  `log-clear` still passes 5/5.
+- The `explorer-restart` scenario closes **every** Explorer window of the session (sanctioned by the task).
+- Not covered: multi-monitor / mixed-DPI behaviour, the tray menu items and balloons, `--settings`
+  (only `--exit` is used, to stop the instance the harness started) and `--help`/`--version` (they open a
+  message box, so they cannot be driven by the console harness), log rotation, Everything-not-installed /
+  database-not-loaded notification paths, and security software blocking the keyboard hook. `--startup` **is**
+  covered now — see §12.7.
+
+### 12.5 Defect found in a degraded Shell session (fixed, with regression evidence)
+
+Re-running the suite after the session had its `explorer.exe` force killed several times (the `explorer-restart`
+scenario does that once per run) turned 12 of 13 scenarios red with **one and the same** symptom - every submit
+became
+
+```
+[WARN] search not redirected: LocationUnavailable detail="RuntimeBinderException: Cannot perform runtime binding on a null reference" raw=""
+```
+
+so every resolved path and scope came back empty and **no** search was redirected any more, including the first
+scenario of the run. The tool itself was fine: it still detected typing, Enter and the idle timeout, it still
+submitted, and it reported the failure explicitly instead of failing silently. The App binary was unchanged
+(`src` was clean apart from the hook fix in 12.3), so this is not a harness regression.
+
+Independent probe, taken while a real Explorer window was open:
+
+```
+CabinetWClass hwnds: 2296904
+ShellWindows Count = 2
+  [0] <NULL ITEM>                    <- C# dynamic reading .HWND throws RuntimeBinderException
+  [1] HWND=2296904 URL='file:///D:/SearchOptimization' Name='SearchOptimization'
+```
+
+Root cause - `src\ExplorerEverythingSearch.Core\Shell\ExplorerLocationResolver.cs`, `TryResolve`: the loop reads
+`(int)window.HWND` for every item of `Shell.Application.Windows()` while the single `catch` sits **outside** the
+loop. A `null` item - a stale `ShellWindows` registration left behind by a killed Explorer generation - throws on
+the first iteration and aborts the whole enumeration, so the real window at the next index is never reached and
+**every** Explorer window of the session is reported as `LocationUnavailable`. The `Enumerate()` method of the
+same file already catches per item, so only `TryResolve` has this single-point failure. Field effect: once one
+stale entry exists, no search of the session is redirected at all - a core-requirement failure, because the
+"Explorer restarted" path the tool has to survive is exactly what leaves such entries behind. The entries
+accumulated with every Explorer kill (1 → 2 → 3 while this was investigated) and survived an `explorer.exe`
+restart as well as a `RuntimeBroker`/`dllhost` restart (INFERENCE - a logoff or reboot is what clears them).
+
+Consequence for the numbers above: the 13/13 records were taken in a healthy Shell; in the degraded session the
+same binary failed 12/13 for the reason above (independently reproduced by the parent agent: 2/13, exit 1).
+
+**Fix (2026-09-13).** `TryResolve` now handles every `ShellWindows` entry on its own: reading `Item(i)` and the
+entry's `HWND` is wrapped in `try`/`catch`, a `null` item is recognised as a stale registration, and such an entry
+is skipped with a `Debug` log line (`ShellWindows[i] is a stale entry left behind by a killed Explorer process;
+skipped`) while the search for the window continues. `Enumerate()` was hardened the same way. An optional logger is
+passed in from `AppRoot`, so the reason is visible in `app.log` - the lack of that line is what made the initial
+diagnosis slow.
+
+**Regression evidence (same degraded session, nothing healed):** the session still held
+`ShellWindows Count = 3` with **3 null entries** (verified right before and after the run), and
+
+```
+dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all
+  passed 13, failed 0, total 72.9s     (exit code 0)
+```
+
+The fixed binary logs the skipped entries and then resolves normally:
+
+```
+[DEBUG] ShellWindows[0] is a stale entry left behind by a killed Explorer process; skipped
+[DEBUG] ShellWindows[1] is a stale entry left behind by a killed Explorer process; skipped
+[DEBUG] ShellWindows[2] is a stale entry left behind by a killed Explorer process; skipped
+[INFO] ResolvedPath="C:\Users\…\ees-release2-…\data"
+[INFO] SearchScope=CurrentDirectoryAndSubdirectories (carried over from the window's folder)
+[INFO] Everything window created
+[INFO] Search completed in 203 ms
+```
+
+The last block is from the **packaged release binary** (`artifacts\ExplorerEverythingSearch-1.0.0-win-x64-portable.zip`,
+unpacked to a temp directory and started with `--root`), i.e. the shipped EXE was re-verified on the degraded shell
+after the package had been rebuilt; the earlier package (built before the fix) reproduced the failure.
+
+### 12.6 Harness hardening
+
+`LogTail.WaitForSubmit` now takes an optional source window handle and every scenario passes the window it
+drives, so a submit of a stale window from an earlier run can no longer be attributed to the scenario under test.
+Before that, `continuous` matched a submit of `hwnd=4984110` whose resolved path belonged to a previous run's
+root while the scenario was driving `hwnd=5050160`.
+
+### 12.7 Start with Windows (real registry, `--startup`)
+
+The `StartupRegistration` path was exercised against the **real** `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+value `ExplorerEverythingSearch` (the tray toggle and the `--startup` command line both go through it), using the
+**packaged** EXE unpacked into a temp directory and started with `--root <temp>` so that the tool's own
+`config.json` decided the behaviour. All four branches were observed:
+
+| Branch | Setup | Observed |
+|---|---|---|
+| Create | value absent, `startWithWindows=true` | `[INFO] start with Windows entry created: "<exe>" --startup`; registry value present and pointing at that EXE (verified: the parsed path equalled the EXE path) |
+| Repair | value present but pointing at `"C:\gone\ExplorerEverythingSearch.exe" --startup` | `[INFO] start with Windows entry repaired to "<exe>" --startup (the previous entry pointed elsewhere)` |
+| Keep | value present and already correct | `[INFO] start with Windows entry is valid` (the value was not rewritten) |
+| Remove | value present, `startWithWindows=false` | `[INFO] start with Windows entry removed`; the registry value was **absent** afterwards |
+
+Raw transcript of the create/remove run (`$env:TEMP\ees-startup-90d4ee`, packaged EXE under `<root>\app`):
+
+```
+step1 Run value: absent
+step2 created: "C:\Users\CONTRO~1\AppData\Local\Temp\ees-startup-90d4ee\app\ExplorerEverythingSearch.exe" --startup
+step2 points at the packaged exe: True
+step3 Run value: absent - removed by the app
+[INFO] start with Windows entry created: "C:\Users\CONTRO~1\AppData\Local\…\ees-startup-90d4ee\app\ExplorerEverythingSearch.exe" --startup
+[INFO] start with Windows entry removed
+cleanup: temp root removed=True; app processes=0
+final Run value: absent (original state restored)
+```
+
+Two notes on the method, because they are the parts that can go wrong when repeating this:
+
+- The config file the tool reads is `<root>\config.json` (the root passed with `--root`, or the directory of the
+  EXE when it is not passed). An instance started from a **deleted** root silently recreates a default config in
+  which `startWithWindows` is `true`; that is exactly what happened in the first attempt at the removal step and
+  it produced `start with Windows entry is valid` instead of the removal. Check the config file exists before
+  concluding anything from a "removal did not happen" result.
+- Stop every `ExplorerEverythingSearch.exe` process **before** deleting the temp root (an unlocked delete leaves
+  a half-removed tree), and re-read the registry value afterwards — the assertion is the registry, not the log.
+
+The machine's `Run` value was absent before this test and is absent again afterwards; no Explorer state, service
+or user setting was modified by it.
+

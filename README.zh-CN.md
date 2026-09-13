@@ -6,7 +6,7 @@
 
 资源管理器自带的搜索既慢又容易让人误判搜索范围。本工具监听每个已打开窗口的搜索框输入，把搜索转交给 [Everything](https://www.voidtools.com/)，范围限定为**触发搜索的那个窗口**当前所在目录及其子目录。结果出现在一个被提到资源管理器前面的 Everything 窗口里，**但不抢键盘焦点**，因此你可以继续在资源管理器搜索框里输入，不断细化查询。
 
-> 状态：研究型原型，仅在一台 Windows 11 机器上人工验证过（实测了什么、没实测什么，见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)）。单元测试工程已经存在（`tests\ExplorerEverythingSearch.Tests`），但尚未运行过；端到端测试工程仍缺失。
+> 状态：已在一台 Windows 11 机器上人工验证，并配套自动化测试（235 项单元/集成测试：234 通过、1 项为人工可选；另有一个驱动真实资源管理器与 Everything 窗口的端到端工程）。实测了什么、没实测什么，见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)。
 
 ## 核心工作链路
 
@@ -242,14 +242,14 @@ dotnet build ExplorerEverythingSearch.sln -c Release
 
 ## 测试
 
-- 单元测试：`tests\ExplorerEverythingSearch.Tests`（xUnit 2.9、`Microsoft.NET.Test.Sdk` 17.11、net8.0-windows，Core 已用 `InternalsVisibleTo` 暴露内部成员）。目前通过 `AppConfigTests` 与 `ConfigStoreTests` 覆盖 `AppConfig.Normalize`/序列化，以及 `ConfigStore`（默认值、损坏文件、原子保存、不可写根目录），并在 `TestSupport` 中提供 `IExplorerLocationResolver`/`IStartupRegistry` 的假实现。
+- 单元/集成测试：`tests\ExplorerEverythingSearch.Tests`（xUnit 2.9、`Microsoft.NET.Test.Sdk` 17.11、net8.0-windows，Core 已用 `InternalsVisibleTo` 暴露内部成员）。覆盖：配置默认值与钳制/序列化、配置存储（默认值、损坏文件、原子保存、不可写根目录）、日志（格式、级别、轮转、清理、开关）、Everything 查询构建（作用域、引号、能力集回退）、Shell 位置分类与作用域解析（live 目录、这台电脑、主文件夹、未知搜索结果视图、不支持的命名空间）、空闲去抖、搜索协调器（取代、去重、多窗口隔离）以及 Enter/空闲会话逻辑。
 
 ```powershell
 dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.csproj -c Release
 ```
 
-  **该测试套件尚未执行过 —— 未验证**（撰写本文档时仓库自身的构建仍在进行中）。
-- 端到端测试：`tests\ExplorerEverythingSearch.E2E` 被 `InternalsVisibleTo` 与 CI 注释引用，但**尚不存在 —— 未验证**；`build.yml` 有意不包含 E2E，因为它会驱动真实的 Explorer 与 Everything 窗口。
+  本仓库最近一次运行：**237 项，通过 236，跳过 1**（跳过项会写 `HKCU\...\Run`，需人工执行），约 4 秒。清理日志的测试覆盖了一个被发现并已修复的真实缺陷：日志线程用 `Set()`/`Reset()` 脉冲交接“文件已关闭”状态，调用方可能错过该脉冲，导致“清空日志”失败并使 UI 线程卡住 5 秒。
+- 端到端测试：`tests\ExplorerEverythingSearch.E2E` 通过 UI Automation 驱动真实的资源管理器与 Everything 窗口，并校验日志、Everything 窗口标题与结果数量。它需要交互式桌面会话，因此 `build.yml` 有意不包含它；请手工运行（见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)）。本仓库最近一次运行：**13 个场景全部通过，72.9 秒**（`dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all`）；其中一次是在被反复强杀 `explorer.exe` 之后处于退化状态的 Shell 会话里跑的，那次运行即 `docs/verification.zh-CN.md` §12.5 所记 `ShellWindows` 僵尸项缺陷的回归验证。
 - 实际执行过的人工验证流程（含耗时与日志片段）见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)。底层观测所用的开发者探针是 `tools\probes\ExplorerProbe`（`resolve` 转储 Shell 位置，`events` 驱动真实搜索框并记录所有 UI Automation 信号）。
 
 ## 故障排查

@@ -85,6 +85,8 @@ waitResult = NativeMethods.MsgWaitForMultipleObjectsEx(
 
 回调运行在 `EES-STA` 上。类名为 `CabinetWClass` 的 `EVENT_OBJECT_CREATE`/`SHOW` 添加窗口；`DESTROY`/`HIDE` 移除窗口；已跟踪窗口的 `NAMECHANGE` 送入提交启发式，并在搜索框为空时刷新记忆的目录。
 
+**所有交给原生 API 的回调委托都必须由字段持有，且与钩子同生命周期**（`_winEventHandler`、`_keyDownHandler`、`_focusHandler`，以及 UI Automation 的各处理器）。`SetWinEventHook`/`SetWindowsHookEx` 只保存指针，因此只作为局部变量存在的委托可能在钩子仍然安装时被 GC 回收；下一次事件就会调用到已释放内存，CLR 直接终止进程（`A callback was made on a garbage collected delegate`）。这曾在 `InstallHooks` 的第一版中真实发生，所以现在委托一律放进字段，并有一个单元测试用反射守住这一点（见 `docs/verification.zh-CN.md` §12.3）。
+
 **搜索框 —— UI Automation 事件**（`SearchBoxWatcher.Attach`）：搜索框自身的 `ValuePattern.ValueProperty` 与 `TextPattern.TextChangedEvent`（这是每次按键的触发源），外加窗口上的 `AutomationElement.NameProperty`（提交/标题信号）。订阅可选的 TextPattern 或标题处理器失败时只记 `Debug`，不致命。
 
 **低频自愈重扫：** 一个自调度的 `System.Threading.Timer`（`Tick`）执行一次 `FindTopLevelWindows("CabinetWClass")` 扫描，重新附加搜索框尚未就绪的窗口，并清理已失效的句柄。间隔由 `explorerRescanSeconds` 决定（默认 **60 秒**，夹紧到 0–3600，`0` = 从不）。同一个定时器兼任附加重试调度器（指数退避 300 ms × 2^attempts，上限 30 s）。无事到期时定时器被设为 `Timeout.Infinite`，完全不会唤醒。
@@ -166,6 +168,8 @@ Shell.Application → .Windows() → 满足 .HWND == hwnd 的项
 ```
 
 全程走**双接口（IDispatch 封送）**，因为这是**跨进程**唯一可用的接口类型：`IShellBrowser` / `IFolderView` 是 Explorer 进程的原始 vtable 接口，**不会**被封送到外部客户端，从另一个进程探测它们会以 `E_NOINTERFACE` 失败（没有注册代理/桩）。`Document.Folder.Self.Path` 就是 Explorer 地址栏所依据的值，因此它是真实的、可能已被重定向的文件系统路径。这一点写在 `ExplorerLocationResolver.cs` 的类注释里，来自早期的探测工作；`E_NOINTERFACE` 这一结果本身在撰写本文档时**未重新实测**。
+
+**枚举必须逐项容错，这是硬要求而不是礼貌。** `ShellWindows` 为每个 Explorer *代次*保留一个条目：Explorer 进程被杀掉时（工具必须能挺过这种情况，而崩溃/重启恢复路径每次都会走到），该注册会以 `null` 条目的形式留下，并在本次会话余下时间里一直存在。因此 `TryResolve` 与 `Enumerate` 都对每一项单独 `try`/`catch`，遇到 `null`/抛异常的条目就跳过并输出一行 `Debug` 日志，而不是让整次查找失败。在此之前，只要存在一个僵尸条目，该会话**所有**窗口都无法解析（`RuntimeBinderException: Cannot perform runtime binding on a null reference` → `LocationUnavailable`，完全不跳转）——见 `docs/verification.zh-CN.md` §12.5，那里也含回归证据（会话中带着三个僵尸条目时 13/13 场景全部通过）。
 
 `ShellLocationClassifier.Classify(selfPath, displayName)` 把原始 parsing name 归类为 `ShellLocationKind`：
 

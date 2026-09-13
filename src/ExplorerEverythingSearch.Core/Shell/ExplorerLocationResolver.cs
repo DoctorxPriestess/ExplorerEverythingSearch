@@ -29,6 +29,19 @@ public interface IExplorerLocationResolver
 /// </summary>
 public sealed class ShellAutomationLocationResolver : IExplorerLocationResolver
 {
+    private readonly Diagnostics.AppLogger? _logger;
+
+    public ShellAutomationLocationResolver(Diagnostics.AppLogger? logger = null) => _logger = logger;
+
+    /// <summary>
+    /// Finds the Shell browser window that belongs to <paramref name="hwnd"/>.
+    ///
+    /// Every entry is handled on its own: ShellWindows keeps dead entries behind after an Explorer
+    /// process is killed (they come back as null items), and reading the HWND of such an entry throws
+    /// a binder exception. Letting one of them escape would hide the real window that follows it in
+    /// the collection - which would make *every* search on the machine unresolvable - so a bad entry is
+    /// skipped and only its own resolution is lost.
+    /// </summary>
     public ExplorerWindowLocation? TryResolve(long hwnd)
     {
         object? app = null;
@@ -37,12 +50,44 @@ public sealed class ShellAutomationLocationResolver : IExplorerLocationResolver
             app = CreateShellApplication();
             dynamic windows = ((dynamic)app).Windows();
             var count = (int)windows.Count;
+            var stale = 0;
+
             for (var i = 0; i < count; i++)
             {
-                dynamic window = windows.Item(i);
-                if ((int)window.HWND != hwnd) continue;
-                return Read(window);
+                object? item;
+                try
+                {
+                    item = windows.Item(i);
+                }
+                catch (Exception ex)
+                {
+                    stale++;
+                    _logger?.Debug($"ShellWindows[{i}] could not be read ({Describe(ex)}); skipped");
+                    continue;
+                }
+
+                if (item is null)
+                {
+                    stale++;
+                    _logger?.Debug($"ShellWindows[{i}] is a stale entry left behind by a killed Explorer process; skipped");
+                    continue;
+                }
+
+                try
+                {
+                    dynamic window = item;
+                    if ((int)window.HWND != hwnd) continue;
+                    return Read(window);
+                }
+                catch (Exception ex)
+                {
+                    stale++;
+                    _logger?.Debug($"ShellWindows[{i}] could not be inspected ({Describe(ex)}); skipped");
+                }
             }
+
+            if (stale > 0)
+                _logger?.Debug($"{stale} of {count} ShellWindows entries were stale while looking for hwnd={hwnd}");
             return null;
         }
         catch (Exception ex)
@@ -66,8 +111,22 @@ public sealed class ShellAutomationLocationResolver : IExplorerLocationResolver
             var count = (int)windows.Count;
             for (var i = 0; i < count; i++)
             {
-                try { list.Add(Read((dynamic)windows.Item(i))); }
-                catch (Exception ex) { list.Add(new ExplorerWindowLocation(-1, string.Empty, string.Empty, string.Empty, Describe(ex))); }
+                try
+                {
+                    object? item = windows.Item(i);
+                    if (item is null)
+                    {
+                        // A killed Explorer process leaves a null entry behind; report it instead of
+                        // letting the binder exception end the whole enumeration.
+                        list.Add(new ExplorerWindowLocation(-1, string.Empty, string.Empty, string.Empty, "stale ShellWindows entry"));
+                        continue;
+                    }
+                    list.Add(Read((dynamic)item));
+                }
+                catch (Exception ex)
+                {
+                    list.Add(new ExplorerWindowLocation(-1, string.Empty, string.Empty, string.Empty, Describe(ex)));
+                }
             }
         }
         catch (Exception ex)

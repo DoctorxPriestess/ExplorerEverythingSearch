@@ -16,6 +16,14 @@
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <!-- Windows-only product; suppress the platform-compatibility analyzer noise for Win32 usage. -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!--
+      WFAC010 asks WinForms apps to configure high DPI through Application.SetHighDpiMode instead of the
+      manifest. This application is WPF based and only references WinForms for the notification area
+      icon (it never calls Application.Run or SetHighDpiMode), while WPF needs the per-monitor-v2
+      awareness declared in app.manifest *before* managed code runs. The manifest declaration in
+      src\ExplorerEverythingSearch.App\app.manifest is therefore intentional.
+    -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 
 </Project>

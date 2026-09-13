@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ExplorerEverythingSearch.E2E</AssemblyName>
+    <RootNamespace>ExplorerEverythingSearch.E2E</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- The harness must never be part of a release package. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Windows Forms only supplies SendKeys; drop its implicit using so Application stays unambiguous. -->
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ExplorerEverythingSearch.Core\ExplorerEverythingSearch.Core.csproj" />
+  </ItemGroup>
+
+</Project>

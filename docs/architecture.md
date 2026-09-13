@@ -85,6 +85,8 @@ waitResult = NativeMethods.MsgWaitForMultipleObjectsEx(
 
 The callbacks run on `EES-STA`. `EVENT_OBJECT_CREATE`/`SHOW` with class name `CabinetWClass` adds a window; `DESTROY`/`HIDE` removes it; `NAMECHANGE` for a tracked window feeds the commit heuristic and refreshes the remembered folder when the search box is empty.
 
+**Every native callback delegate is kept in a field for the lifetime of the hook** (`_winEventHandler`, `_keyDownHandler`, `_focusHandler`, plus the UI Automation handlers). `SetWinEventHook`/`SetWindowsHookEx` store only a pointer, so a delegate that exists solely as a local variable can be collected while the hook is still installed; the next event then calls into freed memory and the CLR terminates the process (`A callback was made on a garbage collected delegate`). This happened in the first release of `InstallHooks` and is why the delegates are fields and why a unit test reflects over them (see `docs/verification.md` §12.3).
+
 **Search box — UI Automation events** (`SearchBoxWatcher.Attach`):
 `ValuePattern.ValueProperty` and `TextPattern.TextChangedEvent` on the search box itself (this is the per-keystroke trigger), plus `AutomationElement.NameProperty` on the window (the commit/title signal). Failures to subscribe to the optional text-pattern or title handler are logged at `Debug` and are not fatal.
 
@@ -167,6 +169,8 @@ Shell.Application → .Windows() → item with .HWND == hwnd
 ```
 
 Everything goes through **dual (IDispatch-marshalled)** interfaces, because that is the only kind of interface that can be used *across a process boundary*: `IShellBrowser` / `IFolderView` are raw vtable interfaces of the Explorer process and are **not marshalled** to an external client. Probing them from another process fails with `E_NOINTERFACE` (no proxy/stub is registered). `Document.Folder.Self.Path` is the same value Explorer's own address bar is built from, so it is the real, possibly relocated, file-system path. This is documented in the class comment of `ExplorerLocationResolver.cs` and was established during the earlier probing work; the `E_NOINTERFACE` result itself was **not re-measured while writing this document**.
+
+**Enumeration is per-entry tolerant, and that is a hard requirement, not politeness.** `ShellWindows` keeps an entry per Explorer *generation*: when an Explorer process is killed (which the tool must survive, and which the crash/restart path does every time), the registration is left behind as a `null` item and stays there for the rest of the session. Both `TryResolve` and `Enumerate` therefore wrap each item in its own `try`/`catch` and skip a `null`/throwing entry with a `Debug` log line, instead of failing the whole lookup. Before that, one stale entry made **every** window of the session unresolvable (`RuntimeBinderException: Cannot perform runtime binding on a null reference` → `LocationUnavailable`, no redirect at all) — see `docs/verification.md` §12.5, which also carries the regression evidence (13/13 scenarios pass on a session holding three stale entries).
 
 `ShellLocationClassifier.Classify(selfPath, displayName)` turns the raw parsing name into a `ShellLocationKind`:
 

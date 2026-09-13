@@ -36,6 +36,13 @@ public sealed class ExplorerWindowMonitor : IDisposable
     private IntPtr _keyboardHook = IntPtr.Zero;
     private readonly AutomationFocusChangedEventHandler _focusHandler;
 
+    /// <summary>
+    /// Must stay referenced for as long as the WinEvent hooks exist: the native side only stores the
+    /// function pointer, so a delegate that is not rooted here can be collected and the next window
+    /// event then calls into freed memory, which terminates the process (not a catchable exception).
+    /// </summary>
+    private readonly NativeMethods.WinEventDelegate _winEventHandler;
+
     private Timer? _timer;
     private long _focusedSearchBoxHwnd;
 
@@ -77,6 +84,7 @@ public sealed class ExplorerWindowMonitor : IDisposable
         _scopes = scopes;
         _focusHandler = OnFocusChanged;
         _keyDownHandler = OnGlobalKeyDown;
+        _winEventHandler = OnWinEvent;
     }
 
     public bool IsRunning => _started && !_disposed;
@@ -149,7 +157,6 @@ public sealed class ExplorerWindowMonitor : IDisposable
     private void InstallHooks()
     {
         if (_hooks.Count > 0) return;
-        var callback = new NativeMethods.WinEventDelegate(OnWinEvent);
         var ranges = new (uint Min, uint Max)[]
         {
             (NativeMethods.EVENT_OBJECT_CREATE, NativeMethods.EVENT_OBJECT_HIDE),
@@ -159,7 +166,7 @@ public sealed class ExplorerWindowMonitor : IDisposable
         foreach (var (min, max) in ranges)
         {
             var hook = NativeMethods.SetWinEventHook(
-                min, max, IntPtr.Zero, callback, 0, 0,
+                min, max, IntPtr.Zero, _winEventHandler, 0, 0,
                 NativeMethods.WINEVENT_OUTOFCONTEXT | NativeMethods.WINEVENT_SKIPOWNPROCESS);
             if (hook != IntPtr.Zero) _hooks.Add(hook);
             else _logger.Warn($"could not install the WinEvent hook for 0x{min:X}-0x{max:X}");
@@ -347,7 +354,12 @@ public sealed class ExplorerWindowMonitor : IDisposable
         try { entry.Watcher.Dispose(); } catch { }
         try { entry.Session.Dispose(); } catch { }
         try { _onWindowClosed?.Invoke(entry.Hwnd); } catch { }
-        if (Interlocked.Read(ref _focusedSearchBoxHwnd) == entry.Hwnd) Interlocked.Exchange(ref _focusedSearchBoxHwnd, 0);
+        if (Interlocked.Read(ref _focusedSearchBoxHwnd) == entry.Hwnd)
+        {
+            Interlocked.Exchange(ref _focusedSearchBoxHwnd, 0);
+            // The focused search box is gone, so the Enter key does not have to be watched any more.
+            UninstallKeyboardHook();
+        }
     }
 
     private void AttachOrSchedule(WindowEntry entry, bool immediate)
