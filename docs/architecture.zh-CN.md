@@ -68,7 +68,9 @@ waitResult = NativeMethods.MsgWaitForMultipleObjectsEx(
 - `WAIT_OBJECT_0 + 1` 或 `WAIT_TIMEOUT` → 有待处理窗口消息：用 `PeekMessage`/`TranslateMessage`/`DispatchMessage` 派发到队列为空。
 - 其它情况（`WAIT_FAILED`、被放弃）→ `Thread.Sleep(1)`，保证线程绝不空转。
 
-`Invoke<T>` 在该线程上执行并等待结果（默认 30 s；协调器解析范围时传 15 s）；`Post` 是即发即忘，WinEvent 与 UI Automation 回调都用它，从而绝不阻塞 Explorer 的回调线程。`Dispose` 会 `PostThreadMessage(WM_QUIT)`、释放信号量并以 2 s 超时 join。
+`Invoke<T>` 在该线程上执行并等待结果（默认 30 s；协调器解析范围时传 15 s）；`Post` 是即发即忘，WinEvent 与 UI Automation 回调都用它，从而绝不阻塞 Explorer 的回调线程。当调用已经位于 STA 线程时 `Invoke` 会内联执行，因此回调里调用它不会死锁。`Dispose` 会 `PostThreadMessage(WM_QUIT)`、释放信号量并以 2 s 超时 join。
+
+**任何会阻塞数秒的操作都不能被等待。** `Invoke` 的超时由调用方给定，而已知缓慢的工作改用 `Post`——UI Automation 的焦点处理器退订会在 UI Automation 内部阻塞约六秒，因此 `Stop` 同步卸载钩子，但把那个调用投递出去（见 `docs/verification.zh-CN.md` §12.9）。`StaDispatcher.Trace`（由 `AppRoot` 接到日志器）会报告每个耗时 ≥250 ms 的工作项、以及每个放弃等待的 `Invoke`，并附带线程是否存活与排队工作量；正是这一对信息让"退出慢六秒"从谜团变成可读结论。
 
 **空闲开销：** 没有 Explorer 活动、没有排队工作、没有窗口消息时，四个工作线程全部阻塞在内核等待上。监控器的定时器在无事可做时一律以 `Timeout.Infinite` 装配（`ScheduleNextTick`）。
 

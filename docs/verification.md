@@ -444,7 +444,7 @@ or user setting was modified by it.
 
 ### 12.8 Command line contract (driven against the built EXE)
 
-Script: `artifacts\verify-cli.ps1` (a verification helper, deliberately outside the repository tree — `artifacts\`
+Script: `tools\verify-cli.ps1` (verification helper, not part of the product; it targets the RID specific `Release` build by default and takes `-Exe <path>` to point at a packaged EXE). It starts the EXE, finds its windows through UI Automation and reads/dismisses the message boxes through Win32 (`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`), because the UI Automation view of a standard message box is **empty** in this session: `FindAll(Descendants, ControlType=Text)` returns nothing, which is why the first version of the script reported an empty dialog text. All 14 checks pass:
 is ignored). It starts the EXE, finds its windows through UI Automation and reads/dismisses the message boxes
 through Win32 (`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`), because the UI Automation view of a standard
 message box is **empty** in this session: `FindAll(Descendants, ControlType=Text)` returns nothing, which is why
@@ -475,49 +475,71 @@ localized one, while the signalling process exits 0; `--exit` makes the running 
 The settings window was closed through its `WindowPattern` before the shutdown check, and every process and temp
 root the script created was removed afterwards (`processes=0`).
 
-### 12.9 Open finding: the STA thread does not accept the stop request in time (root cause not confirmed)
+### 12.9 Defect: every shutdown hung for six seconds on a UI Automation unsubscribe (fixed)
 
-Every shutdown logs
+Symptom, before the fix: every shutdown wrote
 
 ```
 [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
 ```
 
-and the process then takes about six seconds to exit (exit code 0, configuration and logs written normally, no
-search affected while it runs). Reproduced in four independent ways: the packaged EXE with `--exit`, a
-`--root` instance shut down while its settings window was open, a `--root` instance shut down with no settings
-window and no Explorer window tracked (`Explorer rescan (startup): windows=0 searchBoxes=0`), and the E2E harness
-at the end of `basic-idle`. Removing the settings window from the picture changed nothing, so it is not an
-interaction with the settings dialog.
+and the process then took **6.2 s** to exit (exit code 0, searches unaffected, no data loss). Reproduced four
+independent ways: the packaged EXE with `--exit`, a `--root` instance shut down with its settings window open,
+a `--root` instance shut down with no settings window and no Explorer window tracked
+(`Explorer rescan (startup): windows=0 searchBoxes=0`), and the E2E harness at the end of `basic-idle`.
 
-Established facts:
+Leaving it as "an open finding about the dispatcher" would have been wrong, and the dispatcher turned out to be
+innocent. A diagnostic hook on `StaDispatcher` (`Trace`, kept in the product — see the end of this section) showed
+that the pump picks the stop item up immediately and that the **work item itself** runs for six seconds:
 
-- The stop path is `ExplorerWindowMonitor.Stop()` → `StaDispatcher.Invoke(..., TimeSpan.FromSeconds(5))`; the
-  message is the `TimeoutException` thrown by that call (`StaDispatcher.cs`), so the work item never ran within
-  the five seconds — the delay in the log **is** that five second limit.
-- The STA thread is not dead and not disposed: `Invoke` would have thrown `ObjectDisposedException` instead, and
-  in the `basic-idle` run the very same log shows the STA thread doing real work (scope resolution) 5.3 s before
-  the timeout (`Search submitted` at 10:23:20.424 → `Search completed` at 10:23:20.682 → warning at
-  10:23:25.985).
-- Self-deadlock is ruled out: `Invoke` executes inline when it is already on the STA thread
-  (`StaDispatcher.cs`, `Environment.CurrentManagedThreadId == _thread.ManagedThreadId`).
-- Work items that throw cannot kill the pump (the pump catches per item and wraps the whole loop), and only
-  `AppRoot.Dispose()` disposes the dispatcher — after `_monitor.Dispose()`.
+```
+[DEBUG] STA work item started: Stop
+[DEBUG] STA work item 'Stop' was not executed within 00:00:05; threadAlive=True queued=0 threadId=9100
+[DEBUG] STA work item finished: Stop after 6021 ms
+```
 
-So one of two things happens: either the STA thread is inside a work item that does not return (the candidates are
-the Shell/COM calls a WinEvent or UI Automation callback makes, and the `Detach` path of a closed window), or the
-pump is not being woken by `Enqueue`'s `SemaphoreSlim.Release()` in that state. Both are testable but neither is
-confirmed, and guessing here would mean patching the shutdown path blind, so **no change was made**.
+Breadcrumbs inside that item then isolated the call (3 of 3 runs, 6.022 – 6.040 s, so it is deterministic in
+practice):
 
-What would confirm it, in order of cost: (1) a managed stack of the `EES-STA` thread taken while the warning is
-being written (`dotnet-dump collect` + `dotnet-dump analyze` → `clrstack`), which immediately separates the two
-candidates; (2) a temporary breadcrumb `_logger.Debug` at the entry and exit of every STA callback that can block
-(`OnWinEvent`, `OnFocusChanged`, `Detach`, `FocusSearchBox`), which shows the last one entered; (3) a
-reproduction that sends `--exit` within a second of start-up, before any Explorer event can be handled.
+```
+12:13:30.400 STA stop: removing the UI Automation focus handler
+12:13:36.422 STA stop: focus handler removed, uninstalling hooks      <- 6.022 s later
+12:13:36.423 STA stop: hooks uninstalled, detaching windows           <- 1 ms
+12:13:36.423 STA stop: windows detached                               <- < 1 ms
+```
 
-The likely direction of a fix, once the cause is known: shutdown must not depend on the STA thread finishing work
-(`Stop()` can uninstall the hooks from the calling thread and let the background STA thread be abandoned, since
-the process is exiting), or the blocking call has to be made non-blocking (a timeout on the Shell calls in the
-callback path). Both are shutdown-path changes and belong in their own change, not in a documentation pass.
+**Root cause: `Automation.RemoveAutomationFocusChangedEventHandler` blocks for about six seconds inside UI
+Automation.** Every other step of the teardown (unhooking the WinEvent hooks, uninstalling the keyboard hook,
+detaching the tracked windows) is sub-millisecond. The call can occasionally return at once — one of five runs
+finished the whole item in 4 ms — so it is a UI Automation internal wait, not a sleep of ours.
 
+Why it mattered twice: `Stop()` is also called when monitoring is switched off at runtime from the settings
+dialog, on the UI thread, so the same call froze the settings window for six seconds.
 
+**Fix** (`ExplorerWindowMonitor`, plus the `Trace` hook in `StaDispatcher`):
+
+- the teardown that actually stops monitoring (`UninstallHooks`, `Detach` of every tracked window, clearing the
+  window map) stays synchronous and is still waited for — it costs about a millisecond;
+- the slow unsubscribe is now **posted** to the STA thread instead of invoked, so no caller ever waits for it. It
+  still runs on the thread UI Automation requires, and by then the monitor is stopped;
+- `OnFocusChanged` now returns immediately while the handler is not running (`_disposed || !_started`), so a
+  removal that is still queued cannot re-arm anything;
+- a `_focusHandlerRegistered` flag, only touched on the STA thread, keeps a stop/start cycle (runtime toggle)
+  from registering the handler twice while a removal is still queued.
+
+Verification after the fix (same reproduction, no other change):
+
+| Run | Before | After |
+|---|---|---|
+| 1 | 6.4 s, 1 timeout warning | **2.2 s, 0 warnings** |
+| 2 | 6.3 s, 1 timeout warning | **0.2 s, 0 warnings** |
+| 3 | 6.3 s, 1 timeout warning | **2.2 s, 0 warnings** |
+
+The remaining 0.2 – 2.2 s is the normal teardown (the process now exits while the queued unsubscribe is still in
+flight). The full E2E suite was re-run afterwards: **13 of 13 scenarios passed in 70.3 s** with **0** timeout
+warnings in the two application logs, and the unit tests stayed at 237 (236 passed, 1 skipped).
+
+**Diagnostics kept in the product** (`StaDispatcher.Trace`, wired to the logger in `AppRoot`): a line for every
+work item that takes 250 ms or more, and a line for any `Invoke` that gives up, including `threadAlive`,
+`queued` and `threadId`. That pair is what turns "the dispatcher did not finish in time" into an immediately
+readable statement, and it costs nothing at the default log level (`Info`).

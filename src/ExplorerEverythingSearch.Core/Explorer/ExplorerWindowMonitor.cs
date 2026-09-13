@@ -59,6 +59,9 @@ public sealed class ExplorerWindowMonitor : IDisposable
     private volatile bool _started;
     private volatile bool _disposed;
 
+    /// <summary>Only touched on the STA thread, which is the thread UI Automation requires here.</summary>
+    private bool _focusHandlerRegistered;
+
     private sealed class WindowEntry
     {
         public required long Hwnd { get; init; }
@@ -102,14 +105,7 @@ public sealed class ExplorerWindowMonitor : IDisposable
         _sta.Post(() =>
         {
             InstallHooks();
-            try
-            {
-                Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"could not subscribe to UI Automation focus changes: {ex.Message}");
-            }
+            AddFocusHandler();
             Rescan("startup");
         });
         _logger.Info("Explorer search monitoring started");
@@ -125,7 +121,6 @@ public sealed class ExplorerWindowMonitor : IDisposable
         {
             _sta.Invoke<object?>(() =>
             {
-                try { Automation.RemoveAutomationFocusChangedEventHandler(_focusHandler); } catch { }
                 UninstallHooks();
                 foreach (var entry in _windows.Values) Detach(entry);
                 _windows.Clear();
@@ -136,7 +131,41 @@ public sealed class ExplorerWindowMonitor : IDisposable
         {
             _logger.Debug($"stopping the Explorer monitor reported: {ex.Message}");
         }
+
+        // Removing the UI Automation focus handler is measured at about six seconds of blocking inside
+        // UI Automation (docs/verification.md section 12.9) and it has to run on the STA thread, so it is
+        // posted rather than invoked: waiting for it would freeze the caller (the tray menu and the
+        // settings dialog call Stop on the UI thread) and it used to trip the invoke timeout above on
+        // every shutdown. By the time it runs the monitor is stopped and the handler returns at once.
+        // Posted outside the try so it still happens if the synchronous part above timed out.
+        _sta.Post(RemoveFocusHandler);
         _logger.Info("Explorer search monitoring stopped");
+    }
+
+    /// <summary>
+    /// Runs on the STA thread, which is the thread the focus handler was registered on. The flag keeps
+    /// a stop/start cycle from registering the handler twice while a removal is still queued.
+    /// </summary>
+    private void AddFocusHandler()
+    {
+        if (_focusHandlerRegistered) return;
+        try
+        {
+            Automation.AddAutomationFocusChangedEventHandler(_focusHandler);
+            _focusHandlerRegistered = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"could not subscribe to UI Automation focus changes: {ex.Message}");
+        }
+    }
+
+    /// <summary>Runs on the STA thread; see <see cref="AddFocusHandler"/>.</summary>
+    private void RemoveFocusHandler()
+    {
+        if (!_focusHandlerRegistered) return;
+        _focusHandlerRegistered = false;
+        try { Automation.RemoveAutomationFocusChangedEventHandler(_focusHandler); } catch { }
     }
 
     /// <summary>Forces a rescan; used by the tray menu.</summary>
@@ -490,7 +519,7 @@ public sealed class ExplorerWindowMonitor : IDisposable
     /// </summary>
     private void OnFocusChanged(object sender, AutomationFocusChangedEventArgs e)
     {
-        if (_disposed) return;
+        if (_disposed || !_started) return;
         try
         {
             var focused = sender as AutomationElement;

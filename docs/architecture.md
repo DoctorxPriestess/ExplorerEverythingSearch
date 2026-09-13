@@ -68,7 +68,9 @@ waitResult = NativeMethods.MsgWaitForMultipleObjectsEx(
 - `WAIT_OBJECT_0 + 1` or `WAIT_TIMEOUT` → window messages are pending: `PeekMessage`/`TranslateMessage`/`DispatchMessage` until the queue is empty.
 - anything else (`WAIT_FAILED`, abandoned) → `Thread.Sleep(1)` so the thread can never spin.
 
-`Invoke<T>` executes work on the thread and waits (default 30 s; the coordinator passes 15 s for scope resolution); `Post` is fire-and-forget, which is what the WinEvent and UI Automation callbacks use so that an Explorer callback is never blocked. `Dispose` posts `WM_QUIT`, releases the semaphore and joins with a 2 s timeout.
+`Invoke<T>` executes work on the thread and waits (default 30 s; the coordinator passes 15 s for scope resolution); `Post` is fire-and-forget, which is what the WinEvent and UI Automation callbacks use so that an Explorer callback is never blocked. `Invoke` runs inline when it is already on the STA thread, so a callback may call it without deadlocking. `Dispose` posts `WM_QUIT`, releases the semaphore and joins with a 2 s timeout.
+
+**Anything that blocks for seconds must not be waited for.** `Invoke` has a caller-supplied timeout, and work that is known to be slow is `Post`ed instead — the UI Automation focus-handler unsubscribe takes about six seconds inside UI Automation, so `Stop` uninstalls the hooks synchronously but posts that one call (see `docs/verification.md` §12.9). `StaDispatcher.Trace` (wired to the logger by `AppRoot`) reports every work item that takes 250 ms or more and every `Invoke` that gives up, together with whether the thread is alive and how much work is queued; that pair is what made a six second shutdown delay readable instead of mysterious.
 
 **Idle cost:** with no Explorer activity, no queued work and no window messages, all four worker threads are blocked in kernel waits. The timer in the monitor is armed with `Timeout.Infinite` whenever there is nothing due (`ScheduleNextTick`).
 

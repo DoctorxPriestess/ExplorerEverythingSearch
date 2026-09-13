@@ -64,6 +64,7 @@ public sealed class AppRoot : IDisposable
         ConfigPath = _configStore.ConfigPath;
 
         _sta = new StaDispatcher("EES-STA");
+        _sta.Trace = message => _logger.Debug(message);
         var locationResolver = new ShellAutomationLocationResolver(_logger);
         var scopeResolver = new SearchScopeResolver(locationResolver, new KnownFolderResolver(), _scopeTracker, _logger);
         _everythingLocator = new EverythingLocator(() => Config, _logger);

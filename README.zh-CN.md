@@ -254,14 +254,7 @@ dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.
 
 ## 已知问题
 
-- **退出耗时约 6 秒，并会记录一条 dispatcher 警告。** 任何退出路径（托盘菜单、`--exit`、关闭最后一个窗口）都会写入
-
-  ```
-  [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
-  ```
-
-  约 1 秒后完成退出。应用仍以退出码 0 结束，配置与日志正常写入，运行期间的搜索不受影响；代价只是进程比应有的多停留约 5 秒。这条停止请求以 5 秒上限交给专用的 STA 线程，而该线程没有及时取走它——但同一份日志显示它在几秒前仍在正常工作（`Search submitted` / `Search completed`），因此并非线程已死。原因**尚未确认**；证据与"需要什么才能确认"写在 [docs/verification.zh-CN.md](docs/verification.zh-CN.md) 的"未结问题"一节。
-- 所有**未**验证的项目都在 [docs/verification.zh-CN.md](docs/verification.zh-CN.md) 中明确列出：多显示器与混合 DPI、托盘菜单项与气泡、安全软件拦截低级键盘钩子、`--startup` 与重启配合、以及设置对话框的交互式修改。
+所有**未**验证的项目都在 [docs/verification.zh-CN.md](docs/verification.zh-CN.md) 中明确列出：多显示器与混合 DPI、托盘菜单项与气泡、安全软件拦截低级键盘钩子、`--startup` 配合真实重启、以及设置对话框的交互式修改。撰写该文档过程中发现并修复的缺陷（被 GC 回收的 WinEvent 委托、Explorer 重启后残留的 `ShellWindows` 僵尸项、退出时那次六秒的 UI Automation 退订）都在其中给出了证据与修复说明。
 
 ## 故障排查
 

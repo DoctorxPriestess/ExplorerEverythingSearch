@@ -388,7 +388,7 @@ final Run value: absent (original state restored)
 
 ### 12.8 命令行契约（对已构建的 EXE 实际驱动）
 
-脚本：`artifacts\verify-cli.ps1`（验证辅助，故意放在仓库之外——`artifacts\` 已被忽略）。它启动 EXE，用 UI Automation 找到它的窗口，并通过 Win32（`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`）读取与关闭消息框——因为在本会话里标准消息框的 UI Automation 视图是**空的**：`FindAll(Descendants, ControlType=Text)` 什么都返回不了，这正是该脚本第一版报告"对话框文本为空"的原因。14 项检查全部通过：
+脚本：`tools\verify-cli.ps1`（验证辅助，不属于产品本身；默认目标是带 RID 的 `Release` 构建，可用 `-Exe <路径>` 指向打包后的 EXE）。它启动 EXE，用 UI Automation 找到它的窗口，并通过 Win32（`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`）读取与关闭消息框——因为在本会话里标准消息框的 UI Automation 视图是**空的**：`FindAll(Descendants, ControlType=Text)` 什么都返回不了，这正是该脚本第一版报告"对话框文本为空"的原因。14 项检查全部通过：
 
 ```
 PASS version: dialog appears                    title='Explorer Everything Search' class='#32770'
@@ -409,25 +409,52 @@ PASS exit signal: no instance left              processes=0
 
 按需求逐条说明它证明了什么：`--version` 与 `--help` 确实弹出带版本号 / 用法与开关列表的对话框，随后以退出码 0 结束（脚本第一轮还发现帮助文本**没有介绍 `--help` 自己**，已修——现在的检查要求六个开关全部出现）；第二次以 `--settings` 启动**不会**产生第二份副本，而是让正在运行的实例打开自己的设置窗口，其标题是本地化的，同时发信号的进程以退出码 0 结束；`--exit` 让正在运行的实例以退出码 0 停止。在做停止检查之前，设置窗口是通过它的 `WindowPattern` 关闭的；脚本创建的每个进程与临时 root 事后都已清理（`processes=0`）。
 
-### 12.9 未结问题：STA 线程没有及时取走停止请求（根因未确认）
+### 12.9 缺陷：每次退出都因一次 UI Automation 退订卡住六秒（已修复）
 
-每次退出都会记录
+修复前的现象：每次退出都会写入
 
 ```
 [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
 ```
 
-随后进程还要约 6 秒才结束（退出码 0，配置与日志正常写入，运行期间的搜索不受影响）。用四种彼此独立的方式复现：打包 EXE 加 `--exit`；`--root` 实例在设置窗口打开的状态下被关闭；`--root` 实例在既无设置窗口、也没有任何被跟踪的 Explorer 窗口（`Explorer rescan (startup): windows=0 searchBoxes=0`）的状态下被关闭；以及 E2E 跑完 `basic-idle` 后的收尾。把设置窗口从场景里去掉后现象不变，因此与设置对话框无关。
+随后进程要 **6.2 秒**才结束（退出码 0，搜索不受影响，无数据丢失）。用四种彼此独立的方式复现：打包 EXE 加 `--exit`；`--root` 实例在设置窗口打开的状态下被关闭；`--root` 实例在既无设置窗口、也没有任何被跟踪的 Explorer 窗口（`Explorer rescan (startup): windows=0 searchBoxes=0`）的状态下被关闭；以及 E2E 跑完 `basic-idle` 后的收尾。
 
-已确证的事实：
+把它当作"dispatcher 的未结问题"搁置是错的——dispatcher 其实是无辜的。`StaDispatcher` 上的诊断钩子（`Trace`，已保留在产品中，见本节末尾）显示：消息泵**立刻**取走了停止工作项，而是**工作项本身**跑了六秒：
 
-- 停止路径是 `ExplorerWindowMonitor.Stop()` → `StaDispatcher.Invoke(..., TimeSpan.FromSeconds(5))`；这条消息就是该调用抛出的 `TimeoutException`（`StaDispatcher.cs`），也就是说工作项在五秒内根本没被执行——日志里那段时间**正是**这五秒上限。
-- STA 线程既没死也没被释放：否则 `Invoke` 抛的会是 `ObjectDisposedException`；而且在 `basic-idle` 那次运行的同一份日志里，STA 线程在超时前 5.3 秒还在做真实工作（范围解析）：`Search submitted` 10:23:20.424 → `Search completed` 10:23:20.682 → 警告 10:23:25.985。
-- 自身死锁已排除：当调用已经位于 STA 线程时 `Invoke` 会直接内联执行（`StaDispatcher.cs` 里 `Environment.CurrentManagedThreadId == _thread.ManagedThreadId`）。
-- 抛异常的工作项杀不掉消息泵（泵对每个工作项单独 try/catch，整体循环也包着），而全仓只有 `AppRoot.Dispose()` 会释放 dispatcher——且发生在 `_monitor.Dispose()` 之后。
+```
+[DEBUG] STA work item started: Stop
+[DEBUG] STA work item 'Stop' was not executed within 00:00:05; threadAlive=True queued=0 threadId=9100
+[DEBUG] STA work item finished: Stop after 6021 ms
+```
 
-因此只可能是两种情况之一：要么 STA 线程正卡在某个不返回的工作项里（候选是 WinEvent / UI Automation 回调里的 Shell/COM 调用，以及窗口关闭时的 `Detach` 路径），要么在该状态下消息泵没有被 `Enqueue` 的 `SemaphoreSlim.Release()` 唤醒。两者都可检验，但都未确认；此时凭猜改动关闭路径就是盲改，因此**没有做任何修改**。
+在该工作项内部加面包屑后，定位到具体调用（3/3 次，6.022 – 6.040 秒，实践中是确定性的）：
 
-能确认它、按代价从低到高的办法：(1) 在写这条警告的瞬间取 `EES-STA` 线程的托管栈（`dotnet-dump collect` + `dotnet-dump analyze` → `clrstack`），可立即区分上述两个候选；(2) 在所有可能阻塞的 STA 回调入口/出口加临时 `_logger.Debug` 面包屑（`OnWinEvent`、`OnFocusChanged`、`Detach`、`FocusSearchBox`），看最后进入的是哪一个；(3) 做一个启动后 1 秒内就发 `--exit`（早于任何 Explorer 事件被处理）的复现。
+```
+12:13:30.400 STA stop: removing the UI Automation focus handler
+12:13:36.422 STA stop: focus handler removed, uninstalling hooks      <- 6.022 秒之后
+12:13:36.423 STA stop: hooks uninstalled, detaching windows           <- 1 ms
+12:13:36.423 STA stop: windows detached                               <- < 1 ms
+```
 
-根因明确后大致可行的修复方向：关闭流程不应依赖 STA 线程把工作做完（`Stop()` 可以在调用线程上卸载钩子，然后放弃后台 STA 线程——反正进程马上要退出），或者把阻塞调用改成非阻塞（给回调路径上的 Shell 调用加超时）。两者都是关闭路径的改动，应当独立提交，而不是混在文档修订里。
+**根因：`Automation.RemoveAutomationFocusChangedEventHandler` 在 UI Automation 内部阻塞约六秒。** 收尾的其它步骤（卸载 WinEvent 钩子、卸载键盘钩子、分离已跟踪窗口）都在 1 毫秒以内。该调用偶尔也会立刻返回——五次运行中有一次整个工作项只用 4 ms——所以这是 UI Automation 的内部等待，不是我们自己的 sleep。
+
+它造成了两处影响：`Stop()` 在运行时关闭监控（设置对话框）时同样会被调用，且是在 UI 线程上，于是同一个调用会让设置窗口卡住六秒。
+
+**修复**（`ExplorerWindowMonitor`，加上 `StaDispatcher` 里的 `Trace` 钩子）：
+
+- 真正停止监控的那部分收尾（`UninstallHooks`、分离每个已跟踪窗口、清空窗口表）保持同步并仍被等待——它只花约 1 毫秒；
+- 缓慢的退订改为**投递**（`Post`）到 STA 线程而不是 `Invoke`，因此任何调用方都不再等待它；它依然运行在 UI Automation 所要求的那条线程上，而且到那时监控已经停止；
+- `OnFocusChanged` 现在在处理器未运行时立即返回（`_disposed || !_started`），因此一个仍在队列里的退订不会重新武装任何东西；
+- 一个只在 STA 线程上读写的 `_focusHandlerRegistered` 标志，避免"停止 → 启动"（运行时开关）在退订仍排队时把处理器注册两次。
+
+修复后的验证（同一复现，其余未改）：
+
+| 运行 | 修复前 | 修复后 |
+|---|---|---|
+| 1 | 6.4 秒，1 条超时警告 | **2.2 秒，0 条警告** |
+| 2 | 6.3 秒，1 条超时警告 | **0.2 秒，0 条警告** |
+| 3 | 6.3 秒，1 条超时警告 | **2.2 秒，0 条警告** |
+
+剩下的 0.2 – 2.2 秒是正常收尾（进程现在会在那个排队中的退订仍在进行时就退出）。随后重跑了完整 E2E：**13/13 场景通过，70.3 秒**，两份应用日志里 **0** 条超时警告；单元测试仍为 237（236 通过，1 跳过）。
+
+**保留在产品中的诊断**（`StaDispatcher.Trace`，由 `AppRoot` 接到日志器）：任何耗时 ≥250 ms 的工作项都会记一行，任何放弃等待的 `Invoke` 也会记一行，并附带 `threadAlive`、`queued`、`threadId`。正是这一对信息把"dispatcher 没按时完成"变成一眼可读的结论，而在默认日志级别（`Info`）下它不产生任何开销。

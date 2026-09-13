@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace ExplorerEverythingSearch.Core.Threading;
 
@@ -14,12 +15,22 @@ namespace ExplorerEverythingSearch.Core.Threading;
 /// </summary>
 public sealed class StaDispatcher : IDisposable
 {
-    private readonly ConcurrentQueue<Action> _queue = new();
+    private readonly ConcurrentQueue<(Action Work, string Name)> _queue = new();
     private readonly SemaphoreSlim _signal = new(0);
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new(false);
     private uint _threadId;
     private volatile bool _disposed;
+
+    /// <summary>
+    /// Diagnostic hook: one line per work item that takes longer than <see cref="SlowWorkItemMs"/>,
+    /// plus one line when an <see cref="Invoke{T}"/> gives up. Wired to the logger by the application;
+    /// null in tests.
+    /// </summary>
+    public Action<string>? Trace { get; set; }
+
+    /// <summary>Work items slower than this are reported through <see cref="Trace"/>.</summary>
+    public const long SlowWorkItemMs = 250;
 
     public StaDispatcher(string name)
     {
@@ -37,7 +48,7 @@ public sealed class StaDispatcher : IDisposable
     public uint ThreadId => _threadId;
 
     /// <summary>Executes <paramref name="action"/> on the STA thread and waits for its result.</summary>
-    public T Invoke<T>(Func<T> action, TimeSpan? timeout = null)
+    public T Invoke<T>(Func<T> action, TimeSpan? timeout = null, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(StaDispatcher));
         if (Environment.CurrentManagedThreadId == _thread.ManagedThreadId) return action();
@@ -45,7 +56,7 @@ public sealed class StaDispatcher : IDisposable
         using var completed = new ManualResetEventSlim(false);
         T result = default!;
         Exception? failure = null;
-        Enqueue(() =>
+        Enqueue(caller ?? "?", () =>
         {
             try { result = action(); }
             catch (Exception ex) { failure = ex; }
@@ -53,23 +64,28 @@ public sealed class StaDispatcher : IDisposable
         });
 
         if (!completed.Wait(timeout ?? TimeSpan.FromSeconds(30)))
+        {
+            Trace?.Invoke($"STA work item '{caller}' was not executed within {timeout ?? TimeSpan.FromSeconds(30)}; "
+                          + $"threadAlive={_thread.IsAlive} queued={_queue.Count} threadId={_threadId}");
             throw new TimeoutException("STA dispatcher did not complete the requested work in time");
+        }
         if (failure is not null) throw new InvalidOperationException("STA work item failed", failure);
         return result;
     }
 
-    public void Invoke(Action action) => Invoke<object?>(() => { action(); return null; });
+    public void Invoke(Action action, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
+        => Invoke<object?>(() => { action(); return null; }, null, caller);
 
     /// <summary>Fire and forget; used for work that must not block a UIA event handler.</summary>
-    public void Post(Action action)
+    public void Post(Action action, [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
         if (_disposed) return;
-        Enqueue(action);
+        Enqueue(caller ?? "?", action);
     }
 
-    private void Enqueue(Action action)
+    private void Enqueue(string name, Action action)
     {
-        _queue.Enqueue(action);
+        _queue.Enqueue((action, name));
         try { _signal.Release(); } catch (SemaphoreFullException) { }
     }
 
@@ -83,10 +99,18 @@ public sealed class StaDispatcher : IDisposable
         {
             while (!_disposed)
             {
-                while (_queue.TryDequeue(out var action))
+                while (_queue.TryDequeue(out var item))
                 {
-                    try { action(); }
+                    var watch = Stopwatch.StartNew();
+                    try { item.Work(); }
                     catch { /* a failing work item must not kill the pump */ }
+                    var elapsed = watch.ElapsedMilliseconds;
+                    if (elapsed >= SlowWorkItemMs)
+                    {
+                        // Kept in the product: this is what localised the six second UI Automation
+                        // unsubscribe that used to trip the invoke timeout on every shutdown.
+                        Trace?.Invoke($"STA work item '{item.Name}' took {elapsed} ms");
+                    }
                 }
 
                 // Nothing queued: wait for new work or for a window message, without polling.

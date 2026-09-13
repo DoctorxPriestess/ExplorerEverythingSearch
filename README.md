@@ -257,14 +257,7 @@ dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.
 
 ## Known issues
 
-- **Shutdown takes about six seconds and logs a dispatcher warning.** Every exit path (the tray menu, `--exit`, closing the last window) writes
-
-  ```
-  [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
-  ```
-
-  and stops about a second later. The application still exits with code 0, the configuration and the logs are written normally, and searching is unaffected while it runs; the only cost is that the process lingers roughly five seconds longer than it should. The stop request is handed to the dedicated STA thread with a five second limit and that thread does not pick it up in time — although the same log shows it working a few seconds earlier (`Search submitted` / `Search completed`), so it is not a dead thread. The cause is **not** confirmed yet; the evidence and what would confirm it are in the "Open finding" section of [docs/verification.md](docs/verification.md).
-- Everything that is **not** verified is listed explicitly in [docs/verification.md](docs/verification.md): multi-monitor and mixed DPI, the tray menu items and balloons, security software blocking the low-level keyboard hook, `--startup` together with a reboot, and the interactive editing of settings.
+Everything that is **not** verified is listed explicitly in [docs/verification.md](docs/verification.md): multi-monitor and mixed DPI, the tray menu items and balloons, security software blocking the low-level keyboard hook, `--startup` combined with a real reboot, and the interactive editing of settings. The defects that were found and fixed while writing that document (a garbage collected WinEvent delegate, stale `ShellWindows` entries after an Explorer restart, the six second UI Automation unsubscribe on shutdown) are described there with their evidence and their fix.
 
 ## Troubleshooting
 
