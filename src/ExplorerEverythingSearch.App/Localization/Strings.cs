@@ -157,7 +157,7 @@ public sealed record LocalizedStrings
         SettingsRootDirectory = "Application directory",
         AlreadyRunning = "Explorer Everything Search is already running (see the notification area).",
         StartupStaleRepaired = "The start-up entry was stale and has been updated.",
-        HelpText = "ExplorerEverythingSearch [--startup] [--settings] [--exit] [--root <directory>] [--version]",
+        HelpText = "ExplorerEverythingSearch [--startup] [--settings] [--exit] [--root <directory>] [--version] [--help]",
         EverythingNotConfiguredHint = "Set the path to Everything.exe in the settings if it is not detected automatically.",
     };
 
@@ -230,7 +230,7 @@ public sealed record LocalizedStrings
         SettingsRootDirectory = "程序目录",
         AlreadyRunning = "Explorer Everything Search 已在运行（请查看通知区域）。",
         StartupStaleRepaired = "开机启动项已失效，已自动更新。",
-        HelpText = "ExplorerEverythingSearch [--startup] [--settings] [--exit] [--root <目录>] [--version]",
+        HelpText = "ExplorerEverythingSearch [--startup] [--settings] [--exit] [--root <目录>] [--version] [--help]",
         EverythingNotConfiguredHint = "如果未能自动检测到 Everything，请在设置中指定 Everything.exe 路径。",
     };
 }

@@ -84,6 +84,7 @@ public partial class App : Application
             "--exit              stop the running instance",
             "--root <directory>  store config.json and logs in <directory>",
             "--version           show the version",
+            "--help              show this text (-h and /? do the same)",
         };
         return string.Join(Environment.NewLine, lines);
     }

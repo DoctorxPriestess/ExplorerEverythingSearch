@@ -198,8 +198,8 @@ C:\Users\ControlxSaria\AppData\Local\Temp\ees-smoke-root\logs\app.log   （8 363
 | 6 | **托盘与设置中的“打开日志目录”** | 代码对目录调用 `Process.Start`；未演练。 |
 | 7 | **托盘菜单端到端**（各菜单项、状态文本、气泡、双击） | 日志中只出现图标创建（`notification area icon created`）。 |
 | 8 | ~~**开机启动**：写入 HKCU `Run` 值、检测过期项、自动修复、以及设置里的“修复开机启动项”按钮~~ | **注册的四个分支已关闭**：用打包 EXE 加 `--root` 对真实的 `HKCU\...\Run\ExplorerEverythingSearch` 演练，创建 / 修复（过期值指向 `C:\gone\...`）/ 保留 / 移除四条分支都在注册表与 `app.log` 中得到确认——见 §12.7。设置里那个按钮（同一代码的第二入口）未点击。 |
-| 9 | **`--startup`、`--settings`、`--exit`、`--help`、`--version`** | `--startup` **已验证**（§12.7），`--exit` 每轮 E2E 都会用到。`--settings`、`--help`、`--version` 仍未验证：后两者会弹出消息框，控制台 harness 无法驱动或断言。 |
-| 10 | **第二次启动带 `--settings` 能否到达正在运行的实例**（互斥体 + 命名事件） | 未演练。办法：先启动应用，再执行 `ExplorerEverythingSearch.exe --settings`，确认第一个实例弹出对话框。 |
+| 9 | ~~**`--startup`、`--settings`、`--exit`、`--help`、`--version`**~~ | **已关闭**：五个全部验证——`--startup` 对真实注册表（§12.7），`--version` / `--help` / `--settings` / `--exit` 通过驱动已构建的 EXE 并读取它打开的窗口（§12.8）。`-h` 与 `/?` 走与 `--help` 相同的代码路径，但未手工输入过。 |
+| 10 | ~~**第二次启动带 `--settings` 能否到达正在运行的实例**（互斥体 + 命名事件）~~ | **已关闭**：第二个进程以 `--settings --root <目录>` 启动后退出码 0，而已在运行的实例打开了自己的设置窗口（`Explorer Everything Search - 设置`，即本地化标题）；`--exit --root <目录>` 退出码 0，且正在运行的实例以退出码 0 结束——见 §12.8。 |
 | 11 | **用两个不同 `--root` 得到两个互相独立的实例** | 由 `SingleInstanceGuard` 的哈希后缀推理，未运行。 |
 | 12 | ~~空闲 CPU / 不唤醒的论断~~ | **已关闭（实测）**：开两个 Explorer 窗口、工具空闲 12 秒，CPU 时间为 **15.6 ms**（24 核机器，`TotalProcessorTime` 差值，约 **0.005%** 单核），26 个线程。 |
 | 13 | ~~60 秒自愈重扫确实能修补漏掉的窗口事件~~ | **部分关闭**：在 Explorer 重启那次运行中观察到 `Explorer rescan (periodic): windows=1 searchBoxes=1`，E2E 的 `explorer-restart` 场景也复现了恢复过程；但“重扫修补一次**被漏掉**的窗口事件”仍未被刻意构造出来。 |
@@ -385,3 +385,49 @@ final Run value: absent (original state restored)
   并在事后重新读取注册表值——断言的对象是注册表，不是日志。
 
 本机在该测试前没有这个 `Run` 值，测试后也回到没有；该测试没有改动任何 Explorer 状态、服务或用户设置。
+
+### 12.8 命令行契约（对已构建的 EXE 实际驱动）
+
+脚本：`artifacts\verify-cli.ps1`（验证辅助，故意放在仓库之外——`artifacts\` 已被忽略）。它启动 EXE，用 UI Automation 找到它的窗口，并通过 Win32（`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`）读取与关闭消息框——因为在本会话里标准消息框的 UI Automation 视图是**空的**：`FindAll(Descendants, ControlType=Text)` 什么都返回不了，这正是该脚本第一版报告"对话框文本为空"的原因。14 项检查全部通过：
+
+```
+PASS version: dialog appears                    title='Explorer Everything Search' class='#32770'
+PASS version: text carries a version            text='[Button] 确定 | [Static] Explorer Everything Search 1.0.0.0'
+PASS version: dismissed by its OK button        InvokePattern on the button
+PASS version: process exits 0                   exited=True code=0
+PASS help: dialog appears                       title='Explorer Everything Search'
+PASS help: documents every switch               all six switches present
+PASS help: process exits 0                      exited=True code=0
+PASS second instance: primary is running        pid=12996
+PASS settings signal: a new window of the primary opens title='Explorer Everything Search - 设置' class='Window'
+PASS settings signal: the second process exits 0 exited=True code=0
+PASS settings signal: the primary is still running the signalling process did not replace it
+PASS exit signal: the second process exits 0    exited=True code=0
+PASS exit signal: the primary shuts down        exited=True code=0
+PASS exit signal: no instance left              processes=0
+```
+
+按需求逐条说明它证明了什么：`--version` 与 `--help` 确实弹出带版本号 / 用法与开关列表的对话框，随后以退出码 0 结束（脚本第一轮还发现帮助文本**没有介绍 `--help` 自己**，已修——现在的检查要求六个开关全部出现）；第二次以 `--settings` 启动**不会**产生第二份副本，而是让正在运行的实例打开自己的设置窗口，其标题是本地化的，同时发信号的进程以退出码 0 结束；`--exit` 让正在运行的实例以退出码 0 停止。在做停止检查之前，设置窗口是通过它的 `WindowPattern` 关闭的；脚本创建的每个进程与临时 root 事后都已清理（`processes=0`）。
+
+### 12.9 未结问题：STA 线程没有及时取走停止请求（根因未确认）
+
+每次退出都会记录
+
+```
+[DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
+```
+
+随后进程还要约 6 秒才结束（退出码 0，配置与日志正常写入，运行期间的搜索不受影响）。用四种彼此独立的方式复现：打包 EXE 加 `--exit`；`--root` 实例在设置窗口打开的状态下被关闭；`--root` 实例在既无设置窗口、也没有任何被跟踪的 Explorer 窗口（`Explorer rescan (startup): windows=0 searchBoxes=0`）的状态下被关闭；以及 E2E 跑完 `basic-idle` 后的收尾。把设置窗口从场景里去掉后现象不变，因此与设置对话框无关。
+
+已确证的事实：
+
+- 停止路径是 `ExplorerWindowMonitor.Stop()` → `StaDispatcher.Invoke(..., TimeSpan.FromSeconds(5))`；这条消息就是该调用抛出的 `TimeoutException`（`StaDispatcher.cs`），也就是说工作项在五秒内根本没被执行——日志里那段时间**正是**这五秒上限。
+- STA 线程既没死也没被释放：否则 `Invoke` 抛的会是 `ObjectDisposedException`；而且在 `basic-idle` 那次运行的同一份日志里，STA 线程在超时前 5.3 秒还在做真实工作（范围解析）：`Search submitted` 10:23:20.424 → `Search completed` 10:23:20.682 → 警告 10:23:25.985。
+- 自身死锁已排除：当调用已经位于 STA 线程时 `Invoke` 会直接内联执行（`StaDispatcher.cs` 里 `Environment.CurrentManagedThreadId == _thread.ManagedThreadId`）。
+- 抛异常的工作项杀不掉消息泵（泵对每个工作项单独 try/catch，整体循环也包着），而全仓只有 `AppRoot.Dispose()` 会释放 dispatcher——且发生在 `_monitor.Dispose()` 之后。
+
+因此只可能是两种情况之一：要么 STA 线程正卡在某个不返回的工作项里（候选是 WinEvent / UI Automation 回调里的 Shell/COM 调用，以及窗口关闭时的 `Detach` 路径），要么在该状态下消息泵没有被 `Enqueue` 的 `SemaphoreSlim.Release()` 唤醒。两者都可检验，但都未确认；此时凭猜改动关闭路径就是盲改，因此**没有做任何修改**。
+
+能确认它、按代价从低到高的办法：(1) 在写这条警告的瞬间取 `EES-STA` 线程的托管栈（`dotnet-dump collect` + `dotnet-dump analyze` → `clrstack`），可立即区分上述两个候选；(2) 在所有可能阻塞的 STA 回调入口/出口加临时 `_logger.Debug` 面包屑（`OnWinEvent`、`OnFocusChanged`、`Detach`、`FocusSearchBox`），看最后进入的是哪一个；(3) 做一个启动后 1 秒内就发 `--exit`（早于任何 Explorer 事件被处理）的复现。
+
+根因明确后大致可行的修复方向：关闭流程不应依赖 STA 线程把工作做完（`Stop()` 可以在调用线程上卸载钩子，然后放弃后台 STA 线程——反正进程马上要退出），或者把阻塞调用改成非阻塞（给回调路径上的 Shell 调用加超时）。两者都是关闭路径的改动，应当独立提交，而不是混在文档修订里。

@@ -255,13 +255,24 @@ dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.
 - End-to-end tests: `tests\ExplorerEverythingSearch.E2E` drives real Explorer and Everything windows through UI Automation and checks the log, the Everything window title and the result count. It needs an interactive desktop session, so `build.yml` deliberately leaves it out; run it by hand (see [docs/verification.md](docs/verification.md)). Last run in this repository: **13 of 13 scenarios passed in 72.9 s** (`dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all`), including one run on a Shell session left degraded by repeated `explorer.exe` kills — that run is the regression test for the `ShellWindows` zombie-entry defect documented in `docs/verification.md` §12.5.
 - The manual verification protocol that was actually executed (with timings and log excerpts) is in [docs/verification.md](docs/verification.md). The developer probe used for the low-level measurements is `tools\probes\ExplorerProbe` (`resolve` dumps Shell locations, `events` drives a real search box and logs every UI Automation signal).
 
+## Known issues
+
+- **Shutdown takes about six seconds and logs a dispatcher warning.** Every exit path (the tray menu, `--exit`, closing the last window) writes
+
+  ```
+  [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
+  ```
+
+  and stops about a second later. The application still exits with code 0, the configuration and the logs are written normally, and searching is unaffected while it runs; the only cost is that the process lingers roughly five seconds longer than it should. The stop request is handed to the dedicated STA thread with a five second limit and that thread does not pick it up in time — although the same log shows it working a few seconds earlier (`Search submitted` / `Search completed`), so it is not a dead thread. The cause is **not** confirmed yet; the evidence and what would confirm it are in the "Open finding" section of [docs/verification.md](docs/verification.md).
+- Everything that is **not** verified is listed explicitly in [docs/verification.md](docs/verification.md): multi-monitor and mixed DPI, the tray menu items and balloons, security software blocking the low-level keyboard hook, `--startup` together with a reboot, and the interactive editing of settings.
+
 ## Troubleshooting
 
 See [docs/troubleshooting.md](docs/troubleshooting.md) for symptom → cause → fix entries covering Everything not installed/running, empty or wrongly scoped results, the "search scope unknown" notification, security software blocking the keyboard hook, focus behaviour, empty logs, a broken start-with-Windows entry, everything closing, multiple instances, high DPI/multi-monitor, and privileges.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Explorer Everything Search contributors.
+MIT — see [LICENSE](LICENSE). Copyright (c) 2026 DoctorxPriestess.
 
 ## Acknowledgements
 

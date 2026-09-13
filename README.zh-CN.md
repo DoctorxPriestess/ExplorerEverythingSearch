@@ -252,13 +252,24 @@ dotnet test tests\ExplorerEverythingSearch.Tests\ExplorerEverythingSearch.Tests.
 - 端到端测试：`tests\ExplorerEverythingSearch.E2E` 通过 UI Automation 驱动真实的资源管理器与 Everything 窗口，并校验日志、Everything 窗口标题与结果数量。它需要交互式桌面会话，因此 `build.yml` 有意不包含它；请手工运行（见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)）。本仓库最近一次运行：**13 个场景全部通过，72.9 秒**（`dotnet run --project tests\ExplorerEverythingSearch.E2E -c Debug -- --scenario all`）；其中一次是在被反复强杀 `explorer.exe` 之后处于退化状态的 Shell 会话里跑的，那次运行即 `docs/verification.zh-CN.md` §12.5 所记 `ShellWindows` 僵尸项缺陷的回归验证。
 - 实际执行过的人工验证流程（含耗时与日志片段）见 [docs/verification.zh-CN.md](docs/verification.zh-CN.md)。底层观测所用的开发者探针是 `tools\probes\ExplorerProbe`（`resolve` 转储 Shell 位置，`events` 驱动真实搜索框并记录所有 UI Automation 信号）。
 
+## 已知问题
+
+- **退出耗时约 6 秒，并会记录一条 dispatcher 警告。** 任何退出路径（托盘菜单、`--exit`、关闭最后一个窗口）都会写入
+
+  ```
+  [DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
+  ```
+
+  约 1 秒后完成退出。应用仍以退出码 0 结束，配置与日志正常写入，运行期间的搜索不受影响；代价只是进程比应有的多停留约 5 秒。这条停止请求以 5 秒上限交给专用的 STA 线程，而该线程没有及时取走它——但同一份日志显示它在几秒前仍在正常工作（`Search submitted` / `Search completed`），因此并非线程已死。原因**尚未确认**；证据与"需要什么才能确认"写在 [docs/verification.zh-CN.md](docs/verification.zh-CN.md) 的"未结问题"一节。
+- 所有**未**验证的项目都在 [docs/verification.zh-CN.md](docs/verification.zh-CN.md) 中明确列出：多显示器与混合 DPI、托盘菜单项与气泡、安全软件拦截低级键盘钩子、`--startup` 与重启配合、以及设置对话框的交互式修改。
+
 ## 故障排查
 
 症状 → 原因 → 处理的条目见 [docs/troubleshooting.md](docs/troubleshooting.md)，覆盖：Everything 未安装/未运行、结果为空或范围不对、“搜索范围未知”提示、安全软件拦截键盘钩子、焦点行为、日志为空、开机启动失效、Everything 被关闭后的恢复、多实例、高 DPI/多显示器、权限。
 
 ## 许可证
 
-MIT —— 见 [LICENSE](LICENSE)。Copyright (c) 2026 Explorer Everything Search contributors。
+MIT —— 见 [LICENSE](LICENSE)。Copyright (c) 2026 DoctorxPriestess。
 
 ## 致谢
 

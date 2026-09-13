@@ -198,8 +198,8 @@ Everything in this list is **code-only**: it is implemented and reasoned about, 
 | 6 | **"Open log folder"** from tray and settings | code calls `Process.Start` on the folder; not exercised. |
 | 7 | **Tray menu end to end** (all items, status texts, balloons, double-click) | only the icon creation (`notification area icon created`) appears in the log. |
 | 8 | ~~**Start with Windows**: writing the HKCU `Run` value, detecting a stale entry, automatic repair, and the settings "Repair start-up entry" button~~ | **CLOSED for the four registration branches**: the packaged EXE was run with `--root` against the real `HKCU\...\Run\ExplorerEverythingSearch` and create / repair (stale value pointing at `C:\gone\...`) / keep / remove were all observed in the registry and in `app.log` — see §12.7. The settings button itself (a second entry point to the same code) was not clicked. |
-| 9 | **`--startup`, `--settings`, `--exit`, `--help`, `--version`** | `--startup` **is** now verified (§12.7) and `--exit` is used by the E2E harness on every run. `--settings`, `--help` and `--version` remain unverified: the last two open a message box, which the console harness cannot drive or assert. |
-| 10 | **Second launch with `--settings` reaching the running instance** (mutex + named event) | not exercised. Fix: start the app, then `ExplorerEverythingSearch.exe --settings` and check that the first instance opens the dialog. |
+| 9 | ~~**`--startup`, `--settings`, `--exit`, `--help`, `--version`**~~ | **CLOSED**: all five verified — `--startup` against the real registry (§12.7), and `--version` / `--help` / `--settings` / `--exit` by driving the built EXE and reading the windows it opens (§12.8). `-h` and `/?` reach the same code path as `--help` but were not typed by hand. |
+| 10 | ~~**Second launch with `--settings` reaching the running instance** (mutex + named event)~~ | **CLOSED**: a second process started with `--settings --root <dir>` exits 0 while the already running instance opens its settings window (`Explorer Everything Search - 设置`, the localized title); `--exit --root <dir>` exits 0 and the running instance shuts down with exit code 0 — see §12.8. |
 | 11 | **Two independent instances via two different `--root` values** | reasoned from `SingleInstanceGuard`'s hashed suffix; not run. |
 | 12 | ~~Idle CPU / no-wakeup claim~~ | **CLOSED (measured)**: with two Explorer windows open and the tool idle for 12 s it used **15.6 ms** of CPU on a 24-core machine (**0.005 %** of one core, `TotalProcessorTime` delta), 26 threads. |
 | 13 | ~~The 60 s self-healing rescan~~ | **PARTLY CLOSED**: `Explorer rescan (periodic): windows=1 searchBoxes=1` was observed in the Explorer-restart run, and the `explorer-restart` E2E scenario reproduces the recovery. A rescan repairing a *missed* window event was still not produced deliberately. |
@@ -441,4 +441,83 @@ Two notes on the method, because they are the parts that can go wrong when repea
 
 The machine's `Run` value was absent before this test and is absent again afterwards; no Explorer state, service
 or user setting was modified by it.
+
+### 12.8 Command line contract (driven against the built EXE)
+
+Script: `artifacts\verify-cli.ps1` (a verification helper, deliberately outside the repository tree — `artifacts\`
+is ignored). It starts the EXE, finds its windows through UI Automation and reads/dismisses the message boxes
+through Win32 (`EnumChildWindows` + `GetWindowText` + `WM_CLOSE`), because the UI Automation view of a standard
+message box is **empty** in this session: `FindAll(Descendants, ControlType=Text)` returns nothing, which is why
+the first version of the script reported an empty dialog text. All 14 checks pass:
+
+```
+PASS version: dialog appears                    title='Explorer Everything Search' class='#32770'
+PASS version: text carries a version            text='[Button] 确定 | [Static] Explorer Everything Search 1.0.0.0'
+PASS version: dismissed by its OK button        InvokePattern on the button
+PASS version: process exits 0                   exited=True code=0
+PASS help: dialog appears                       title='Explorer Everything Search'
+PASS help: documents every switch               all six switches present
+PASS help: process exits 0                      exited=True code=0
+PASS second instance: primary is running        pid=12996
+PASS settings signal: a new window of the primary opens title='Explorer Everything Search - 设置' class='Window'
+PASS settings signal: the second process exits 0 exited=True code=0
+PASS settings signal: the primary is still running the signalling process did not replace it
+PASS exit signal: the second process exits 0    exited=True code=0
+PASS exit signal: the primary shuts down        exited=True code=0
+PASS exit signal: no instance left              processes=0
+```
+
+What that establishes, per requirement: `--version` and `--help` really do show a dialog with the version / the
+usage and the switch list and then exit 0 (the first run of the script found that the help text **did not document
+`--help` itself**, which is fixed — the check now asks for all six switches); a second launch with `--settings`
+does **not** start a second copy but makes the running instance open its settings window, whose title is the
+localized one, while the signalling process exits 0; `--exit` makes the running instance stop with exit code 0.
+The settings window was closed through its `WindowPattern` before the shutdown check, and every process and temp
+root the script created was removed afterwards (`processes=0`).
+
+### 12.9 Open finding: the STA thread does not accept the stop request in time (root cause not confirmed)
+
+Every shutdown logs
+
+```
+[DEBUG] stopping the Explorer monitor reported: STA dispatcher did not complete the requested work in time
+```
+
+and the process then takes about six seconds to exit (exit code 0, configuration and logs written normally, no
+search affected while it runs). Reproduced in four independent ways: the packaged EXE with `--exit`, a
+`--root` instance shut down while its settings window was open, a `--root` instance shut down with no settings
+window and no Explorer window tracked (`Explorer rescan (startup): windows=0 searchBoxes=0`), and the E2E harness
+at the end of `basic-idle`. Removing the settings window from the picture changed nothing, so it is not an
+interaction with the settings dialog.
+
+Established facts:
+
+- The stop path is `ExplorerWindowMonitor.Stop()` → `StaDispatcher.Invoke(..., TimeSpan.FromSeconds(5))`; the
+  message is the `TimeoutException` thrown by that call (`StaDispatcher.cs`), so the work item never ran within
+  the five seconds — the delay in the log **is** that five second limit.
+- The STA thread is not dead and not disposed: `Invoke` would have thrown `ObjectDisposedException` instead, and
+  in the `basic-idle` run the very same log shows the STA thread doing real work (scope resolution) 5.3 s before
+  the timeout (`Search submitted` at 10:23:20.424 → `Search completed` at 10:23:20.682 → warning at
+  10:23:25.985).
+- Self-deadlock is ruled out: `Invoke` executes inline when it is already on the STA thread
+  (`StaDispatcher.cs`, `Environment.CurrentManagedThreadId == _thread.ManagedThreadId`).
+- Work items that throw cannot kill the pump (the pump catches per item and wraps the whole loop), and only
+  `AppRoot.Dispose()` disposes the dispatcher — after `_monitor.Dispose()`.
+
+So one of two things happens: either the STA thread is inside a work item that does not return (the candidates are
+the Shell/COM calls a WinEvent or UI Automation callback makes, and the `Detach` path of a closed window), or the
+pump is not being woken by `Enqueue`'s `SemaphoreSlim.Release()` in that state. Both are testable but neither is
+confirmed, and guessing here would mean patching the shutdown path blind, so **no change was made**.
+
+What would confirm it, in order of cost: (1) a managed stack of the `EES-STA` thread taken while the warning is
+being written (`dotnet-dump collect` + `dotnet-dump analyze` → `clrstack`), which immediately separates the two
+candidates; (2) a temporary breadcrumb `_logger.Debug` at the entry and exit of every STA callback that can block
+(`OnWinEvent`, `OnFocusChanged`, `Detach`, `FocusSearchBox`), which shows the last one entered; (3) a
+reproduction that sends `--exit` within a second of start-up, before any Explorer event can be handled.
+
+The likely direction of a fix, once the cause is known: shutdown must not depend on the STA thread finishing work
+(`Stop()` can uninstall the hooks from the calling thread and let the background STA thread be abandoned, since
+the process is exiting), or the blocking call has to be made non-blocking (a timeout on the Shell calls in the
+callback path). Both are shutdown-path changes and belong in their own change, not in a documentation pass.
+
 
