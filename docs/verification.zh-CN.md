@@ -213,7 +213,7 @@ C:\Users\ControlxSaria\AppData\Local\Temp\ees-smoke-root\logs\app.log   （8 363
 | 21 | **在受限机器上以非管理员身份运行** | 清单为 `asInvoker`，测试运行也未提权，但未构造 ACL 受限场景（例如只读安装目录，会触发“配置不可写”通知）。 |
 | 22 | ~~单元测试与 E2E 测试~~ | **已关闭**：`dotnet test tests\ExplorerEverythingSearch.Tests\… -c Release` → **237 个测试，236 通过，1 跳过**，约 4 秒（跳过那个会写 `HKCU\…\Run`，留待手工运行）；`tests\ExplorerEverythingSearch.E2E --scenario all` → **13/13 通过，72.9 秒**，健康会话跑了两次，退化会话见 §12.5。 |
 | 23 | ~~`tools\package.ps1`~~ | **已关闭**：执行过两次（其中一次包含单元测试）；产出 `ExplorerEverythingSearch-1.0.0-win-x64-portable.zip`（57.7 MB：单个自包含 EXE + README/LICENSE）与 `…-win-x64-framework-dependent.zip`（0.2 MB）。portable 包被解到临时目录并从中启动，用于验证“发布出来的二进制”（§12.5）。 |
-| 23b | **GitHub 工作流** `.github\workflows\build.yml` 与 `release.yml` | 仍然**从未执行过**（开发机到 github.com 无网络，未推送）。已人工审查其 YAML 并手工执行了各步骤；审查中发现一个真实缺陷：`ExplorerEverythingSearch.sln` 里原本只有两个测试工程，CI 会在**完全不编译产品**的情况下变绿——已用 `dotnet sln add` 加入 `Core`/`App`，现在 `dotnet build ExplorerEverythingSearch.sln` 会构建全部四个工程。 |
+| 23b | ~~**GitHub 工作流** `.github\workflows\build.yml` 与 `release.yml`~~ | **已关闭（2026-09-13）**：仓库推送后，`Release` 工作流在标签 `v1.0.0` 上运行并**成功**，产出了带 2 个附件的 GitHub Release「Explorer Everything Search 1.0.0」；`Build and test` 在 `main` 的 `322bf16` 上运行也**成功**——也就是说 CI 全链路（还原 → 整解 `Release` 构建 → 单元测试 → 上传 TRX）在 `windows-latest` runner 上是绿的，而不只是本机通过。此前的人工审查已经发现解决方案里只有测试工程（已用 `dotnet sln add` 修复）。 |
 | 24 | **`IShellBrowser`/`IFolderView` 返回 `E_NOINTERFACE` 这一结果** | 写在 `ExplorerLocationResolver` 类注释中，来自早期探测；撰写本文档时未重新实测。 |
 | 25 | **`EVERYTHING_IPC_COPYDATA_COMMAND_LINE_UTF8` 被接受但无效** | 写在 `EverythingIpc` 类注释中，来自早期探测；撰写本文档时未重新实测。 |
 | 26 | **`EverythingIpc.IsDatabaseLoaded` / `IsDriveIndexed` 被应用任何路径使用** | 它们对 IPC 有响应（已验证），但应用从不查询 —— 仅供诊断。 |

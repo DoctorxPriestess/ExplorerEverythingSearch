@@ -241,7 +241,7 @@ dotnet build ExplorerEverythingSearch.sln -c Release
 - Solution: `ExplorerEverythingSearch.sln` — `src\ExplorerEverythingSearch.Core` (net8.0-windows, no UI; WPF is referenced only for the managed UI Automation client) and `src\ExplorerEverythingSearch.App` (WinExe, WPF + WinForms for the tray icon; assembly name `ExplorerEverythingSearch`).
 - Version/authors come from `Directory.Build.props` (`1.0.0`, "Explorer Everything Search contributors").
 - With a `RuntimeIdentifier`, the App project publishes self-contained, single-file, compressed, **untrimmed** (WPF cannot be trimmed) and without a PDB.
-- CI: `.github\workflows\build.yml` restores, builds in `Release` on `windows-latest`, runs the unit tests and uploads `test-results.trx`. `.github\workflows\release.yml` (on a `v*` tag or manually) resolves the version, runs `tools/package.ps1`, uploads both archives and creates/updates the GitHub release. **Neither workflow has been executed — UNVERIFIED.**
+- CI: `.github\workflows\build.yml` restores, builds in `Release` on `windows-latest`, runs the unit tests and uploads `test-results.trx`. `.github\workflows\release.yml` (on a `v*` tag or manually) resolves the version, runs `tools/package.ps1`, uploads both archives and creates/updates the GitHub release. Both have run: `Build and test` succeeded on `main` and `Release` succeeded on the tag `v1.0.0`, publishing [Explorer Everything Search 1.0.0](https://github.com/DoctorxPriestess/ExplorerEverythingSearch/releases/tag/v1.0.0) with the portable and framework-dependent archives attached.
 
 ## Tests
 

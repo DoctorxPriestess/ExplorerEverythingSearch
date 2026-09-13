@@ -238,7 +238,7 @@ dotnet build ExplorerEverythingSearch.sln -c Release
 - 解决方案：`ExplorerEverythingSearch.sln` —— `src\ExplorerEverythingSearch.Core`（net8.0-windows，无 UI；引用 WPF 只是为了托管 UI Automation 客户端）和 `src\ExplorerEverythingSearch.App`（WinExe，WPF + WinForms 用于托盘图标；程序集名 `ExplorerEverythingSearch`）。
 - 版本与作者来自 `Directory.Build.props`（`1.0.0`，"Explorer Everything Search contributors"）。
 - 指定了 `RuntimeIdentifier` 时，App 项目按自包含、单文件、压缩、**不裁剪**（WPF 不支持裁剪）且不生成 PDB 发布。
-- CI：`.github\workflows\build.yml` 在 `windows-latest` 上还原、`Release` 构建、运行单元测试并上传 `test-results.trx`；`.github\workflows\release.yml`（`v*` 标签或手动触发）解析版本、执行 `tools/package.ps1`、上传两个包并创建/更新 GitHub Release。**两个工作流都尚未执行过 —— 未验证。**
+- CI：`.github\workflows\build.yml` 在 `windows-latest` 上还原、`Release` 构建、运行单元测试并上传 `test-results.trx`；`.github\workflows\release.yml`（`v*` 标签或手动触发）解析版本、执行 `tools/package.ps1`、上传两个包并创建/更新 GitHub Release。两者都已实际运行：`Build and test` 在 `main` 上成功，`Release` 在标签 `v1.0.0` 上成功，并发布了 [Explorer Everything Search 1.0.0](https://github.com/DoctorxPriestess/ExplorerEverythingSearch/releases/tag/v1.0.0)（附件为 portable 与 framework-dependent 两个压缩包）。
 
 ## 测试
 
